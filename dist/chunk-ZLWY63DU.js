@@ -6,7 +6,7 @@ import {
   isLikelyPlaceholderKey,
   normalizeGoogleDisplayName,
   normalizeGoogleModelId
-} from "./chunk-HWHLJ23P.js";
+} from "./chunk-JEZVWKSK.js";
 import {
   formatUpstreamError,
   upstreamHttpStatus
@@ -33,7 +33,7 @@ import {
   poolFreeStatus,
   resolveModelReasoningMetadata,
   shouldHideModel
-} from "./chunk-VKU4MKV7.js";
+} from "./chunk-S23YQBOY.js";
 import {
   BACKENDS,
   CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW,
@@ -50,7 +50,7 @@ import {
   resolveProviderCredential,
   resolveProviderOAuthAccountId,
   resolveProviderOAuthProviderData
-} from "./chunk-5DUQQ7PO.js";
+} from "./chunk-VWAB7443.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -991,6 +991,19 @@ function providerRefreshToken(providerId, authType, authRef) {
 import { createHash, randomUUID as randomUUID2 } from "crypto";
 import { mkdir, open, readFile, rename, unlink, writeFile } from "fs/promises";
 import { join as join3 } from "path";
+
+// src/pool/process-alive.ts
+function processAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+
+// src/pool/health.ts
 var PoolHealthLockTimeoutError = class extends Error {
   ownerPid;
   ownerSince;
@@ -1047,15 +1060,6 @@ var MISSING_NOTE = "missing";
 var MAX_NOTE_CHARS = 120;
 function emptyStore() {
   return { version: 1, entries: {} };
-}
-function processAlive(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === "EPERM";
-  }
 }
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -2616,6 +2620,7 @@ export {
   resolveProvidersForDisplay,
   localProvidersToServerModels,
   providerRefreshToken,
+  processAlive,
   poolAccountScope,
   poolEndpointScope,
   PoolHealthStore,
@@ -2641,4 +2646,4 @@ export {
   poolDiagnostic,
   verifyConfiguredPoolMember
 };
-//# sourceMappingURL=chunk-TCXBMTXE.js.map
+//# sourceMappingURL=chunk-ZLWY63DU.js.map

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.22.6] - Unreleased
+
+### Changed
+
+- Share the process-liveness check used by pool health and Claude pool session locks. This removes duplicate code without changing behavior (PR #91).
+
 ## [0.22.5] - 2026-11-09
 
 ### Fixed

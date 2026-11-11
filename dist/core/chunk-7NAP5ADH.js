@@ -472,7 +472,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.22.5",
+  version: "0.22.6",
   publishConfig: {
     access: "public"
   },
@@ -7328,6 +7328,19 @@ function poolOutputCap(providerId, modelId, contextWindow) {
 import { createHash as createHash9, randomUUID as randomUUID5 } from "crypto";
 import { mkdir, open as open3, readFile, rename, unlink, writeFile } from "fs/promises";
 import { join as join10 } from "path";
+
+// src/pool/process-alive.ts
+function processAlive2(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+
+// src/pool/health.ts
 var PoolHealthLockTimeoutError = class extends Error {
   ownerPid;
   ownerSince;
@@ -7384,15 +7397,6 @@ var MISSING_NOTE = "missing";
 var MAX_NOTE_CHARS = 120;
 function emptyStore() {
   return { version: 1, entries: {} };
-}
-function processAlive2(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === "EPERM";
-  }
 }
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -8344,7 +8348,7 @@ function wrapPoolError(error) {
 }
 var sessions = new PoolSessionRoutes();
 async function memberModel(routeId, context) {
-  const { createRelayModel: createRelayModel2 } = await import("./model-5XHFAS7D.js");
+  const { createRelayModel: createRelayModel2 } = await import("./model-AD3PSZET.js");
   return createRelayModel2(routeId, {
     sessionId: context.sessionId,
     ...context.options?.onDebug ? { onDebug: context.options.onDebug } : {},
@@ -8945,4 +8949,4 @@ export {
   loadCoreRegistry,
   listRelayModels
 };
-//# sourceMappingURL=chunk-YZWV2Q76.js.map
+//# sourceMappingURL=chunk-7NAP5ADH.js.map

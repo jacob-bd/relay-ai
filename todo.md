@@ -1,0 +1,27 @@
+# Todo: UI Shutdown Command & Pool Activity Clear Logs
+
+- [x] Propose detailed plan to Jacob and get explicit approval before making code changes
+- [x] Item 1: UI Shutdown Command & Clean Exit UX
+  - [x] Add `POST /api/ui/shutdown` endpoint in `src/ui/api.ts` with `onShutdown` callback in `UiApiOptions`
+  - [x] Implement `stopUiServer()` in `src/ui-command.ts` (API call + SIGTERM fallback + lock removal)
+  - [x] Wire up `stopUiServer()` in `src/cli.ts` for `relay-ai ui stop` / `relay-ai ui close` / `relay-ai ui --stop`
+  - [x] Update help text and "already running" message in `src/ui-command.ts` to show `relay-ai ui stop`
+  - [x] Add "Shut down UI" button in sidebar footer in `src/ui/public/index.html` and `src/ui/public/app.js` with confirmation and clean disconnected screen
+- [x] Item 2: Clear Logs Button in Free Pool Activity
+  - [x] Export `clearPoolActivity()` in `src/pool/activity.ts`
+  - [x] Add `POST /api/pool/activity/clear` endpoint in `src/ui/api.ts`
+  - [x] Add **Clear logs** button in `poolActivityHtml` in `src/ui/public/app.js`
+  - [x] Wire up click handler in `renderPoolActivity` to call `POST /api/pool/activity/clear`, reload pool data, and show toast
+- [x] Item 3: "Free Models Only" Checkbox Reset
+  - [x] Reset `state.providerModelFreeOnly = false` when switching providers or exiting to another section
+- [x] Item 4: Pool Activity Timestamps & Refresh Button
+  - [x] Add date and time to activity timestamps (e.g., `Nov 8, 05:45:50 PM`)
+  - [x] Add **Refresh** button and 5s auto-polling
+- [x] Item 5: Release Prep
+  - [x] Bump version to 0.22.3 in `package.json` and `package-lock.json`
+  - [x] Update `CHANGELOG.md` under `## [0.22.3] - 2026-11-08`
+- [x] Verification & Build
+  - [x] Add unit tests for `stopUiServer` and `clearPoolActivity`
+  - [x] Run `npm test` (all 305 test files, 3,275 tests passed) and `npm run typecheck`
+  - [x] Rebuild with `npm run build` and link with `npm link`
+  - [x] Verify CLI `relay-ai --version` (0.22.3) and `relay ui stop` command
