@@ -197,6 +197,44 @@ describe('Relay Core on-demand usage', () => {
     expect(account!.windows[0]).toMatchObject({ label: 'Gemini 4 models', usedPercent: 10 });
   });
 
+  it('prefers retrieveUserQuotaSummary for Antigravity and stops after the first valid summary', async () => {
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.endsWith('/v1internal:retrieveUserQuotaSummary')) {
+        return json({
+          groups: [
+            {
+              displayName: 'Gemini Models',
+              buckets: [
+                { bucketId: 'gemini-weekly', window: 'weekly', resetTime: '2026-11-14T00:08:02Z', remainingFraction: 0.35 },
+                { bucketId: 'gemini-5h', window: '5h', resetTime: '2026-11-12T20:18:16Z', remainingFraction: 0.66 },
+              ],
+            },
+            {
+              displayName: 'Gemini 4 Argon',
+              buckets: [
+                { bucketId: 'gemini-argon-wtu-weekly', window: 'weekly', resetTime: '2026-11-14T20:15:28Z', remainingFraction: 0.58 },
+              ],
+            },
+          ],
+        });
+      }
+      return json({}, 404);
+    }) as unknown as typeof fetch;
+
+    const [account] = await getRelayAccountUsage({ providerIds: ['antigravity'], fetchImpl });
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toContain('retrieveUserQuotaSummary');
+    expect(account).toMatchObject({ status: 'ok' });
+    expect(account!.windows.map((w: any) => [w.label, w.usedPercent])).toEqual([
+      ['Gemini (5h)', 34],
+      ['Gemini (weekly)', 65],
+      ['Gemini 4 Argon (weekly)', 42],
+    ]);
+  });
+
   it('shares one request between overlapping checks of the same account', async () => {
     const { fetchImpl, calls } = scriptedFetch();
     await Promise.all([

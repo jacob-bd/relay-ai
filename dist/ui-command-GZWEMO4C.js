@@ -3,7 +3,7 @@ import {
   handlePoolApi,
   invalidateUiPoolMember,
   verifyUiPoolMember
-} from "./chunk-QWENKGRW.js";
+} from "./chunk-KG3P2GQQ.js";
 import {
   AA_SITE_URL,
   IntelligenceError,
@@ -46,11 +46,11 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-CVJMCGDN.js";
+} from "./chunk-P2E5CTWT.js";
 import {
   readBody,
   sendJson
-} from "./chunk-UMABOXBV.js";
+} from "./chunk-7ADYT32Q.js";
 import {
   DEFAULT_SERVER_UI_PORT,
   checkExistingServer,
@@ -81,20 +81,20 @@ import {
   setModelMarkedFree,
   setModelsHidden,
   updateCustomEndpointProvider
-} from "./chunk-IWPW7CHP.js";
+} from "./chunk-NYFFGT3O.js";
 import {
   poolCatalogEntry
-} from "./chunk-YZCZRCSM.js";
+} from "./chunk-OKSVQXT5.js";
 import {
   clearPoolActivity,
   fetchProviderCatalog,
   providersForCodexSubagents,
   providersForTarget
-} from "./chunk-ZLWY63DU.js";
+} from "./chunk-RPTGNMJP.js";
 import {
   copilotPlanTier
-} from "./chunk-JEZVWKSK.js";
-import "./chunk-A7QRQQKE.js";
+} from "./chunk-5IM432XT.js";
+import "./chunk-7PYO2CQY.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -140,7 +140,7 @@ import {
   setTrustSystemCertificates,
   supportsManualModels,
   writeSecureLogLine
-} from "./chunk-S23YQBOY.js";
+} from "./chunk-HWZBCTO3.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -1194,7 +1194,7 @@ async function handleMeasureContextWindow(req, res) {
     if (!res.writableEnded) controller.abort();
   });
   try {
-    const { checkContextWindow } = await import("./test-model-FT5V5ZWU.js");
+    const { checkContextWindow } = await import("./test-model-IPDLKBUP.js");
     const context = await checkContextWindow(provider.id, body.modelId, controller.signal);
     if (!res.destroyed) sendJson(res, 200, { ok: true, context });
   } catch {
@@ -1221,7 +1221,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-P2KYJ5CW.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-5TJL6KVW.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1552,7 +1552,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-FT5V5ZWU.js");
+    const { testModel } = await import("./test-model-IPDLKBUP.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!controller.signal.aborted) {
       try {
@@ -1569,7 +1569,7 @@ async function handleTestModel(req, res) {
         if (provider && cachedModel) {
           const probeAllowed = customEndpointKind(provider) || isFreeStatus(classifyFreeStatus({ model: cachedModel, providerId: provider.id, templateId: provider.templateId }));
           if (probeAllowed || providerKind(provider.id) === "ollama") {
-            const { checkContextWindow } = await import("./test-model-FT5V5ZWU.js");
+            const { checkContextWindow } = await import("./test-model-IPDLKBUP.js");
             context = await checkContextWindow(provider.id, cachedModel.id, controller.signal, { lookupOnly: !probeAllowed });
           }
         }
@@ -1716,7 +1716,7 @@ async function handleEditServerUrl(req, res) {
       sendJson(res, 400, { ok: false, error: valid.error ?? "Invalid URL", hint: valid.hint });
       return;
     }
-    const { setProviderServerUrl } = await import("./crud-RXFQIGER.js");
+    const { setProviderServerUrl } = await import("./crud-JV6AICBV.js");
     const previous = provider.api.url ?? "";
     if (previous.replace(/\/+$/, "") === newUrl) {
       sendJson(res, 200, { ok: true, unchanged: true });
@@ -2611,4 +2611,4 @@ export {
   runUiCommand,
   stopUiServer
 };
-//# sourceMappingURL=ui-command-U4I7SIHR.js.map
+//# sourceMappingURL=ui-command-GZWEMO4C.js.map

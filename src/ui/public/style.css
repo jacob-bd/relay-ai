@@ -1242,7 +1242,7 @@ input { font-family: inherit; }
 .usage-checked { color: var(--text-3); margin-right: auto; }
 .usage-row {
   display: grid;
-  grid-template-columns: minmax(120px, 180px) minmax(80px, 1fr) 44px minmax(110px, auto);
+  grid-template-columns: minmax(120px, 180px) minmax(80px, 1fr) minmax(72px, auto) minmax(110px, auto);
   align-items: center;
   gap: 10px;
   font-size: 13px;
@@ -1262,7 +1262,7 @@ input { font-family: inherit; }
 }
 .usage-bar.is-mid > span { background: oklch(78% 0.16 75); }
 .usage-bar.is-high > span { background: var(--error); }
-.usage-pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-1); }
+.usage-pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-1); white-space: nowrap; }
 .usage-reset { color: var(--text-3); }
 .usage-balance { grid-template-columns: minmax(120px, 180px) 1fr; }
 .usage-amount { color: var(--text-1); font-variant-numeric: tabular-nums; }

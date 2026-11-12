@@ -16,12 +16,12 @@ import {
   recordPoolActivity,
   resolveLocalProviderApiKey,
   retryPoolFailure
-} from "./chunk-ZLWY63DU.js";
+} from "./chunk-RPTGNMJP.js";
 import {
   copilotPlanTier,
   filterCachedCopilotModels,
   stripGoogleModelPrefix
-} from "./chunk-JEZVWKSK.js";
+} from "./chunk-5IM432XT.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
@@ -58,7 +58,7 @@ import {
   sseChunk,
   streamActivity,
   thinkingProviderOptions
-} from "./chunk-S23YQBOY.js";
+} from "./chunk-HWZBCTO3.js";
 import {
   isProviderKind,
   resolveProviderOAuthProviderData
@@ -2393,7 +2393,8 @@ function catalogEntryFromModel(model, providerName, priority, appCatalog = false
   const context = model.contextWindow ?? DEFAULT_CONTEXT;
   const label = formatCodexModelLabel(model);
   const wireId = model.upstreamModelId ?? model.id;
-  const reasoningFields = codexCatalogReasoningFields(model.npm ?? "", wireId, {
+  const reasoningNpm = model.npm ?? (model.modelFormat === "cloud-code" && wireId.toLowerCase().includes("gemini-") ? "@ai-sdk/google" : "");
+  const reasoningFields = codexCatalogReasoningFields(reasoningNpm, wireId, {
     apiBaseUrl: model.apiBaseUrl,
     supportedParameters: model.supportedParameters,
     reasoning: model.reasoning,
@@ -2838,7 +2839,7 @@ function wrapPoolError(error) {
 }
 var sessions = new PoolSessionRoutes();
 async function memberModel(routeId, context) {
-  const { createRelayModel } = await import("./model-SMFH26PW.js");
+  const { createRelayModel } = await import("./model-S2NQMQSQ.js");
   return createRelayModel(routeId, {
     sessionId: context.sessionId,
     ...context.options?.onDebug ? { onDebug: context.options.onDebug } : {},
@@ -3191,4 +3192,4 @@ export {
   parseRelayRouteId,
   loadCoreRegistry
 };
-//# sourceMappingURL=chunk-YZCZRCSM.js.map
+//# sourceMappingURL=chunk-OKSVQXT5.js.map

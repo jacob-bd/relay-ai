@@ -4,6 +4,10 @@
 import { randomUUID } from 'node:crypto';
 import { splitToolUseId } from '../proxy-shared.js';
 import { ANTIGRAVITY_USER_AGENT } from '../oauth/antigravity-oauth.js';
+import {
+  isGeminiHydrogenModel,
+  mapCodexEffortToGeminiHydrogenLevel,
+} from '../provider-factory.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -293,6 +297,15 @@ export function anthropicToCloudCode(
   }
   if (typeof body.temperature === 'number') generationConfig.temperature = body.temperature;
   if (typeof body.top_p === 'number') generationConfig.topP = body.top_p;
+  if (isGeminiHydrogenModel(realModelId)) {
+    const rawEffort = (body.output_config as JsonRecord | undefined)?.effort;
+    if (typeof rawEffort === 'string') {
+      const thinkingLevel = mapCodexEffortToGeminiHydrogenLevel(rawEffort.trim().toLowerCase());
+      if (thinkingLevel) {
+        generationConfig.thinkingConfig = { thinkingLevel, includeThoughts: true };
+      }
+    }
+  }
 
   const ccTools = translateTools(body.tools);
   const systemInstruction = extractSystem(body.system);

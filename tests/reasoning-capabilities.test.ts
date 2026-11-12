@@ -11,6 +11,12 @@ const REPRESENTATIVE_ROUTES: Array<{ npm: string; modelId: string; metadata?: Re
   { npm: '@ai-sdk/openai', modelId: 'gpt-5-pro' },
   { npm: '@ai-sdk/openai', modelId: 'gpt-5.6-luna', metadata: { useResponsesLite: true } },
   { npm: '@ai-sdk/google', modelId: 'gemini-3.7-flash-high' },
+  { npm: '@ai-sdk/google', modelId: 'gemini-4-hydrogen-medium' },
+  {
+    npm: '@ai-sdk/anthropic',
+    modelId: 'anthropic-antigravity__gemini-4-hydrogen-medium',
+    metadata: { providerId: 'antigravity', upstreamModelId: 'anthropic-antigravity__gemini-4-hydrogen-medium' },
+  },
   { npm: '@ai-sdk/google', modelId: 'gemini-2.5-pro' },
   { npm: '@ai-sdk/anthropic', modelId: 'claude-sonnet-4-5' },
   { npm: '@ai-sdk/xai', modelId: 'grok-4.5' },

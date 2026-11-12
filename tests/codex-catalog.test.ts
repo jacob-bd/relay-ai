@@ -87,4 +87,20 @@ describe('codex catalog entry generation', () => {
       'low', 'medium', 'high',
     ]);
   });
+
+  it('includes xhigh for Antigravity Cloud Code Gemini 4 Hydrogen models', () => {
+    const hydrogen: LocalProviderModel = {
+      id: 'gemini-4-hydrogen-xhigh',
+      name: 'Gemini 4 Hydrogen (XHigh)',
+      family: 'gemini',
+      brand: 'Google',
+      modelFormat: 'cloud-code',
+      upstreamModelId: 'gemini-4-hydrogen-xhigh',
+    };
+    const entry = modelToCatalogEntry(hydrogen, 'Cloud Code Assist');
+    expect(entry.supported_reasoning_levels.map(level => level.effort)).toEqual([
+      'low', 'medium', 'high', 'xhigh',
+    ]);
+    expect(entry.default_reasoning_level).toBe('medium');
+  });
 });

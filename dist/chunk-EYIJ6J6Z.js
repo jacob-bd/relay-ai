@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import {
   translateRequest
-} from "./chunk-A7QRQQKE.js";
+} from "./chunk-7PYO2CQY.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -14,7 +14,7 @@ import {
   modelIdError,
   saveRegistry,
   supportsManualModels
-} from "./chunk-S23YQBOY.js";
+} from "./chunk-HWZBCTO3.js";
 import {
   resolveProviderCredential
 } from "./chunk-VWAB7443.js";
@@ -156,4 +156,4 @@ export {
   addManualModel,
   removeManualModel
 };
-//# sourceMappingURL=chunk-6A3PDD3F.js.map
+//# sourceMappingURL=chunk-EYIJ6J6Z.js.map

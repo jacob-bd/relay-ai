@@ -4411,6 +4411,107 @@ function createOpenRouterFetch(fetchImpl = globalThis.fetch) {
     });
   };
 }
+var GOOGLE_THINKING_LEVEL_HEADER = "x-relay-google-thinking-level";
+function stripHeaderEntry(headers, headerName) {
+  if (!headers) return { value: void 0, headers };
+  const target = headerName.toLowerCase();
+  if (headers instanceof Headers) {
+    const value2 = headers.get(headerName) ?? void 0;
+    if (!headers.has(headerName)) return { value: value2, headers };
+    const next2 = new Headers(headers);
+    next2.delete(headerName);
+    return { value: value2, headers: next2 };
+  }
+  if (Array.isArray(headers)) {
+    let value2;
+    const next2 = [];
+    for (const [k, v] of headers) {
+      if (k.toLowerCase() === target) value2 = v;
+      else next2.push([k, v]);
+    }
+    return { value: value2, headers: value2 !== void 0 ? next2 : headers };
+  }
+  let value;
+  let found = false;
+  const next = {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === target) {
+      value = v;
+      found = true;
+    } else if (v !== void 0) {
+      next[k] = v;
+    }
+  }
+  return { value, headers: found ? next : headers };
+}
+function extractGoogleThinkingLevelHeader(init, input) {
+  const fromInit = stripHeaderEntry(init?.headers, GOOGLE_THINKING_LEVEL_HEADER);
+  if (fromInit.value !== void 0) {
+    return {
+      level: fromInit.value,
+      init: { ...init, headers: fromInit.headers }
+    };
+  }
+  if (typeof Request !== "undefined" && input instanceof Request && input.headers.has(GOOGLE_THINKING_LEVEL_HEADER)) {
+    const level = input.headers.get(GOOGLE_THINKING_LEVEL_HEADER) ?? void 0;
+    const headers = new Headers(init?.headers ?? input.headers);
+    headers.delete(GOOGLE_THINKING_LEVEL_HEADER);
+    return { level, init: { ...init, headers } };
+  }
+  return { level: void 0, init };
+}
+function applyGoogleThinkingLevelToBody(body, thinkingLevel) {
+  if (!thinkingLevel || !body || typeof body !== "object" || Array.isArray(body)) return;
+  const record3 = body;
+  const rawGen = record3.generationConfig;
+  const gen = rawGen && typeof rawGen === "object" && !Array.isArray(rawGen) ? rawGen : {};
+  const rawThinking = gen.thinkingConfig;
+  const thinking = rawThinking && typeof rawThinking === "object" && !Array.isArray(rawThinking) ? rawThinking : {};
+  record3.generationConfig = {
+    ...gen,
+    thinkingConfig: { ...thinking, thinkingLevel }
+  };
+}
+function wrapGoogleThinkingLevelFetch(fetchImpl = globalThis.fetch) {
+  return async (input, init) => {
+    const { level, init: cleanInit } = extractGoogleThinkingLevelHeader(init, input);
+    if (!level || !cleanInit || typeof cleanInit.body !== "string") {
+      return fetchImpl(input, cleanInit);
+    }
+    try {
+      const parsed = JSON.parse(cleanInit.body);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        applyGoogleThinkingLevelToBody(parsed, level);
+        return fetchImpl(input, { ...cleanInit, body: JSON.stringify(parsed) });
+      }
+    } catch {
+    }
+    return fetchImpl(input, cleanInit);
+  };
+}
+function encodeGoogleThinkingLevelWorkaround(params) {
+  const opts = params.providerOptions;
+  const googleOpts = opts?.google;
+  const thinkingConfig = googleOpts?.thinkingConfig;
+  if (thinkingConfig?.thinkingLevel !== "xhigh") return params;
+  return {
+    ...params,
+    headers: {
+      ...params.headers,
+      [GOOGLE_THINKING_LEVEL_HEADER]: "xhigh"
+    },
+    providerOptions: {
+      ...opts,
+      google: {
+        ...googleOpts,
+        thinkingConfig: {
+          ...thinkingConfig,
+          thinkingLevel: "high"
+        }
+      }
+    }
+  };
+}
 function findCreateFactory(mod) {
   for (const value of Object.values(mod)) {
     if (typeof value === "function" && value.name.startsWith("create")) {
@@ -4486,7 +4587,7 @@ async function createLanguageModelSingle(spec) {
   }
   if (npm === "@ai-sdk/google") {
     const { createGoogleGenerativeAI } = await import("@ai-sdk/google");
-    const google = createGoogleGenerativeAI({ apiKey, fetch: activityFetch() });
+    const google = createGoogleGenerativeAI({ apiKey, fetch: wrapGoogleThinkingLevelFetch(activityFetch()) });
     return google(modelId);
   }
   if (npm === "@ai-sdk/anthropic") {
@@ -4864,7 +4965,11 @@ function withProviderRequestDefaults(model, spec) {
         if (npm === "@ai-sdk/alibaba" && prompt.at(-1)?.role === "tool") {
           prompt = [...prompt, { role: "user", content: [{ type: "text", text: "Continue." }] }];
         }
-        const prepared = { ...params, prompt, providerOptions };
+        const prepared = encodeGoogleThinkingLevelWorkaround({
+          ...params,
+          prompt,
+          providerOptions
+        });
         return anthropicCaching ? applyAnthropicPromptCaching(prepared) : prepared;
       }
     }
@@ -4919,6 +5024,7 @@ async function createLanguageModel(spec) {
 var ANTHROPIC_EFFORT_LEVELS = ["low", "medium", "high"];
 var OPENAI_EFFORT_LEVELS = ["low", "medium", "high"];
 var GEMINI_EFFORT_LEVELS = ["low", "medium", "high"];
+var GEMINI_HYDROGEN_EFFORT_LEVELS = ["low", "medium", "high", "xhigh"];
 var MISTRAL_EFFORT_LEVELS = ["high", "none"];
 var XAI_BASE_EFFORT_LEVELS = ["low", "medium", "high"];
 var XAI_XHIGH_EFFORT_LEVELS = ["low", "medium", "high", "xhigh"];
@@ -4931,6 +5037,7 @@ var GLM_53_EFFORT_LEVELS = ["low", "medium", "high", "xhigh"];
 var GENERIC_EFFORT_VOCAB = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 var ANTHROPIC_WIRE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 var GEMINI_DECLARED_EFFORT_LEVELS = ["minimal", "low", "medium", "high"];
+var GEMINI_HYDROGEN_DECLARED_EFFORT_LEVELS = ["minimal", "low", "medium", "high", "xhigh"];
 var GROQ_CEREBRAS_WIRE_EFFORT_LEVELS = ["none", "low", "medium", "high"];
 var PERPLEXITY_WIRE_EFFORT_LEVELS = ["minimal", "low", "medium", "high"];
 function wireVocabulary(vocab) {
@@ -4939,6 +5046,7 @@ function wireVocabulary(vocab) {
 }
 var normalizeAnthropicDeclared = wireVocabulary(ANTHROPIC_WIRE_EFFORT_LEVELS);
 var normalizeGeminiDeclared = wireVocabulary(GEMINI_DECLARED_EFFORT_LEVELS);
+var normalizeGeminiHydrogenDeclared = wireVocabulary(GEMINI_HYDROGEN_DECLARED_EFFORT_LEVELS);
 var normalizeMistralDeclared = wireVocabulary(MISTRAL_EFFORT_LEVELS);
 var normalizeGroqDeclared = wireVocabulary(GROQ_CEREBRAS_WIRE_EFFORT_LEVELS);
 var normalizePerplexityDeclared = wireVocabulary(PERPLEXITY_WIRE_EFFORT_LEVELS);
@@ -5011,12 +5119,28 @@ function isClaudeReasoningModel(modelId) {
   const minor = m[2] !== void 0 ? Number(m[2]) : 0;
   return major > 4 || major === 4 && minor >= 6;
 }
+function stripGeminiRoutePrefix(modelId) {
+  const trimmed = modelId.toLowerCase().trim();
+  const sep = trimmed.indexOf("__");
+  const bare = sep >= 0 ? trimmed.slice(sep + 2) : trimmed;
+  return bare.startsWith("models/") ? bare.slice("models/".length) : bare;
+}
+function isGeminiHydrogenModel(modelId) {
+  const bare = stripGeminiRoutePrefix(modelId);
+  return bare === "gemini-4-hydrogen" || bare.startsWith("gemini-4-hydrogen-") || bare.startsWith("gemini-4-hydrogen[");
+}
+function isBridgedAntigravityGeminiHydrogen(npm, modelId, metadata) {
+  if (npm !== "@ai-sdk/anthropic") return false;
+  const candidate = metadata?.upstreamModelId ?? modelId;
+  const isAntigravity = metadata?.providerId !== void 0 && isProviderKind(metadata.providerId, "antigravity") || candidate.toLowerCase().startsWith("anthropic-antigravity__") || modelId.toLowerCase().startsWith("anthropic-antigravity__");
+  return isAntigravity && (isGeminiHydrogenModel(candidate) || isGeminiHydrogenModel(modelId));
+}
 function isGeminiReasoningModel(modelId) {
-  const lower = modelId.toLowerCase();
+  const lower = stripGeminiRoutePrefix(modelId);
   return lower.startsWith("gemini-2.5-") || lower.startsWith("gemini-3") || lower.startsWith("gemini-3.") || lower.startsWith("gemini-4") || lower.startsWith("gemini-4.");
 }
 function isGemini3Model(modelId) {
-  const lower = modelId.toLowerCase();
+  const lower = stripGeminiRoutePrefix(modelId);
   return lower.startsWith("gemini-3") || lower.startsWith("gemini-3.") || lower.startsWith("gemini-4") || lower.startsWith("gemini-4.");
 }
 function isMistralReasoningModel(modelId) {
@@ -5290,6 +5414,23 @@ function mapCodexEffortToGeminiLevel(effort) {
       return GEMINI_EFFORT_LEVELS.includes(effort) ? effort : void 0;
   }
 }
+function mapCodexEffortToGeminiHydrogenLevel(effort) {
+  switch (effort) {
+    case "none":
+    case "minimal":
+    case "low":
+      return "low";
+    case "medium":
+      return "medium";
+    case "high":
+      return "high";
+    case "xhigh":
+    case "max":
+      return "xhigh";
+    default:
+      return void 0;
+  }
+}
 function mapCodexEffortToGeminiBudget(effort) {
   const direct = GEMINI_25_BUDGETS[effort];
   if (direct !== void 0) return direct > 0 ? direct : void 0;
@@ -5333,6 +5474,17 @@ function resolveRawReasoningCapabilities(npm, modelId, metadata) {
     return openRouterReasoningCapabilities(metadata);
   }
   if (npm === "@ai-sdk/anthropic" || id.startsWith("claude-")) {
+    if (isBridgedAntigravityGeminiHydrogen(npm, modelId, metadata)) {
+      return {
+        levels: [...GEMINI_HYDROGEN_EFFORT_LEVELS],
+        defaultLevel: "medium",
+        supportsSummaries: true,
+        mode: "controllable",
+        source: "provider-rule",
+        confidence: "documented",
+        wireFormat: { kind: "google-thinking-config" }
+      };
+    }
     const isClaude = isClaudeReasoningModel(modelId);
     const declared = declaredEffortLevels(metadata, normalizeAnthropicDeclared);
     if (isClaude || metadata?.reasoning || declared.length > 0) {
@@ -5375,12 +5527,17 @@ function resolveRawReasoningCapabilities(npm, modelId, metadata) {
     return EMPTY_REASONING;
   }
   if (npm === "@ai-sdk/google" || id.startsWith("gemini-")) {
-    const declared = declaredEffortLevels(metadata, normalizeGeminiDeclared);
+    const hydrogen = isGeminiHydrogenModel(modelId);
+    const declared = declaredEffortLevels(
+      metadata,
+      hydrogen ? normalizeGeminiHydrogenDeclared : normalizeGeminiDeclared
+    );
     const isGemini = isGeminiReasoningModel(modelId);
-    const budgetEra = /^gemini-2[.-]5/.test(id);
+    const budgetEra = /^gemini-2[.-]5/.test(stripGeminiRoutePrefix(modelId));
+    const ruleLevels = !isGemini ? null : hydrogen ? GEMINI_HYDROGEN_EFFORT_LEVELS : GEMINI_EFFORT_LEVELS;
     if (declared.length > 0 || isGemini) {
       const levels = declared.length > 0 && !budgetEra ? declared : unionEffortLevels(
-        isGemini ? GEMINI_EFFORT_LEVELS : null,
+        ruleLevels,
         budgetEra ? [] : declared,
         npm,
         modelId,
@@ -5588,6 +5745,10 @@ function effortProviderOptions(npm, effort, modelId, metadata) {
   }
   if (npm === "@ai-sdk/anthropic" || npm === VERTEX_ANTHROPIC_NPM) {
     if (!modelId) return void 0;
+    if (isBridgedAntigravityGeminiHydrogen(npm, modelId, metadata)) {
+      const mapped2 = mapCodexEffortToGeminiHydrogenLevel(effort);
+      return mapped2 ? { anthropic: { effort: mapped2 } } : void 0;
+    }
     const declared = declaredEffortLevels(metadata, normalizeAnthropicDeclared);
     if (declared.includes(effort)) {
       return {
@@ -5603,10 +5764,18 @@ function effortProviderOptions(npm, effort, modelId, metadata) {
   }
   if (npm === "@ai-sdk/google") {
     const id = modelId ?? "";
-    const declared = declaredEffortLevels(metadata, normalizeGeminiDeclared);
-    if (declared.length > 0 && !/^gemini-2[.-]5/.test(id.toLowerCase())) {
+    const hydrogen = isGeminiHydrogenModel(id);
+    const declared = declaredEffortLevels(
+      metadata,
+      hydrogen ? normalizeGeminiHydrogenDeclared : normalizeGeminiDeclared
+    );
+    if (declared.length > 0 && !/^gemini-2[.-]5/.test(stripGeminiRoutePrefix(id))) {
       if (!declared.includes(effort)) return void 0;
       return { google: { thinkingConfig: { thinkingLevel: effort, includeThoughts: true } } };
+    }
+    if (hydrogen) {
+      const thinkingLevel = mapCodexEffortToGeminiHydrogenLevel(effort);
+      return thinkingLevel ? { google: { thinkingConfig: { thinkingLevel, includeThoughts: true } } } : void 0;
     }
     if (isGemini3Model(id)) {
       const thinkingLevel = mapCodexEffortToGeminiLevel(effort);
@@ -5989,8 +6158,10 @@ function createCloudCodeFetch(options, fetchImpl) {
     };
     const url = requestUrl(input);
     const streaming = url.includes("streamGenerateContent");
-    const signal = init?.signal ?? (input instanceof Request ? input.signal : void 0);
-    const geminiBody = await readJsonBody(input, init);
+    const { level: thinkingLevel, init: cleanInit } = extractGoogleThinkingLevelHeader(init, input);
+    const signal = cleanInit?.signal ?? (input instanceof Request ? input.signal : void 0);
+    const geminiBody = await readJsonBody(input, cleanInit);
+    applyGoogleThinkingLevelToBody(geminiBody, thinkingLevel);
     if (options.onDebug) debug(`fingerprint ${JSON.stringify(requestFingerprint(geminiBody))}`);
     const envelope = {
       project: options.projectId,
@@ -8348,7 +8519,7 @@ function wrapPoolError(error) {
 }
 var sessions = new PoolSessionRoutes();
 async function memberModel(routeId, context) {
-  const { createRelayModel: createRelayModel2 } = await import("./model-AD3PSZET.js");
+  const { createRelayModel: createRelayModel2 } = await import("./model-AGMH3HYP.js");
   return createRelayModel2(routeId, {
     sessionId: context.sessionId,
     ...context.options?.onDebug ? { onDebug: context.options.onDebug } : {},
@@ -8949,4 +9120,4 @@ export {
   loadCoreRegistry,
   listRelayModels
 };
-//# sourceMappingURL=chunk-7NAP5ADH.js.map
+//# sourceMappingURL=chunk-BBCQV3SU.js.map

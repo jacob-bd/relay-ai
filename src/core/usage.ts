@@ -8,7 +8,7 @@ import { CLAUDE_CODE_CLI_VERSION } from '../oauth/claude-identity.js';
 import { providerKind } from '../registry/provider-kind.js';
 import type { RegistryProvider } from '../registry/types.js';
 import {
-  parseAntigravityUsage, parseChatGptUsage, parseClaudeUsage, parseCopilotUsage, parseXaiUsage,
+  parseAntigravityQuotaSummary, parseAntigravityUsage, parseChatGptUsage, parseClaudeUsage, parseCopilotUsage, parseXaiUsage,
 } from '../usage/parse.js';
 import { loadStoredUsage, saveUsageResults } from '../usage/store.js';
 import { VERSION } from '../constants.js';
@@ -109,19 +109,37 @@ async function chatGptUsage(provider: RegistryProvider, ctx: FetchContext): Prom
 
 async function antigravityUsage(provider: RegistryProvider, ctx: FetchContext): Promise<UsageResult> {
   const token = await accessToken(provider);
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    'User-Agent': ANTIGRAVITY_USER_AGENT,
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+
+  let summaryError: UsageError | undefined;
+  for (const base of ANTIGRAVITY_BASE_URLS) {
+    try {
+      const body = await getJson(ctx, `${base}/v1internal:retrieveUserQuotaSummary`, {
+        method: 'POST',
+        headers,
+        body: '{}',
+      }, 'Antigravity');
+      const windows = parseAntigravityQuotaSummary(body);
+      if (windows) return { windows };
+    } catch (err) {
+      summaryError = err instanceof UsageError ? err : new UsageError('unavailable', 'Antigravity usage request failed.');
+      if (summaryError.code === 'reauth_required') throw summaryError;
+    }
+  }
+
+  // Fallback for older/mocked Cloud Code servers that only expose fetchAvailableModels.
   const responses: unknown[] = [];
-  let lastError: UsageError | undefined;
-  // Preview models (Gemini 4) are listed by the daily endpoint, standard ones by the main endpoint.
+  let lastError: UsageError | undefined = summaryError;
   for (const base of ANTIGRAVITY_BASE_URLS) {
     try {
       responses.push(await getJson(ctx, `${base}/v1internal:fetchAvailableModels`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'User-Agent': ANTIGRAVITY_USER_AGENT,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
+        headers,
         body: '{}',
       }, 'Antigravity'));
     } catch (err) {

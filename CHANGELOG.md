@@ -1,10 +1,19 @@
 # Changelog
 
-## [0.22.6] - Unreleased
+## [0.22.6] - 2026-11-12
+
+### Added
+
+- **Gemini 4 Hydrogen Extra (`xhigh`) reasoning effort across Core and CLI tools.** `gemini-4-hydrogen*` now exposes `['low', 'medium', 'high', 'xhigh']` in Relay Core (`listRelayModels`, `createRelayModel(..., { reasoning: 'xhigh' })`), Codex CLI / Codex App catalogs (`src/codex/catalog.ts`, `src/codex/favorites-catalog.ts`), Antigravity bridged routes (`src/antigravity/anthropic-to-cloudcode.ts`), Claude Code, and Gemini CLI (`src/gemini-proxy.ts`). To bypass `@ai-sdk/google`'s client-side `minimal | low | medium | high` schema restriction, `withProviderRequestDefaults` ferries `'xhigh'` via an internal request header that `wrapGoogleThinkingLevelFetch` and `createCloudCodeFetch` strip before restoring `generationConfig.thinkingConfig.thinkingLevel = 'xhigh'` on the wire. Gemini 4 Argon and Gemini 3 models keep `['low', 'medium', 'high']`.
 
 ### Changed
 
 - Share the process-liveness check used by pool health and Claude pool session locks. This removes duplicate code without changing behavior (PR #91).
+
+### Fixed
+
+- **Antigravity Plan Usage now aligns with Antigravity / AGY and stops duplicating `Gemini 4 models`.** `antigravityUsage()` queries Google's grouped quota endpoint (`v1internal:retrieveUserQuotaSummary`) first and renders the actual `Gemini (5h)`, `Gemini (weekly)`, `Claude / GPT (5h)`, `Claude / GPT (weekly)`, and `Gemini 4 Argon (weekly)` windows; the `fetchAvailableModels` fallback also merges `gemini-4-hydrogen-*` into the `gemini` pool so it no longer renders a duplicate `Gemini 4 models` row.
+- **Relay UI Plan Usage rows now label percentages explicitly as `% used`.** Added `used` next to each percentage in `src/ui/public/app.js` and widened the percentage column in `src/ui/public/style.css` so it aligns clearly with the CLI output and distinguishes consumed quota from Antigravity's `% Remaining` display.
 
 ## [0.22.5] - 2026-11-09
 

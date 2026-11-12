@@ -538,6 +538,44 @@ describe('createRelayModel Cloud Code Assist routes', () => {
     },
   );
 
+  it('exposes and sends Extra (xhigh) thinkingLevel for Gemini 4 Hydrogen without SDK validation failure', async () => {
+    const hydrogenProvider = antigravityProvider({
+      modelsCache: {
+        fetchedAt: '2026-11-12T00:00:00Z',
+        models: [{
+          id: 'gemini-4-hydrogen-medium',
+          name: 'Gemini 4 Hydrogen (Medium)',
+          upstreamModelId: 'gemini-4-hydrogen-medium',
+          modelFormat: 'cloud-code',
+          npm: null,
+          apiUrl: null,
+        }],
+      },
+    });
+    writeRegistry([hydrogenProvider]);
+    writeSecrets({
+      'oauth:provider:antigravity': oauthCredential({ providerData: { projectId: PROJECT_ID } }),
+    });
+
+    const { listRelayModels } = await import('../src/core/catalog.js');
+    const descriptor = listRelayModels().find(m => m.routeId === 'antigravity::gemini-4-hydrogen-medium')!;
+    expect(descriptor.capabilities.reasoning).toBe('adjustable');
+    expect(descriptor.capabilities.reasoningLevels).toEqual(['low', 'medium', 'high', 'xhigh']);
+
+    fetchMock.mockResolvedValue(streamResponse([sseChunk(geminiTextPayload('ok'))]));
+    const model = await createRelayModel('antigravity::gemini-4-hydrogen-medium', { reasoning: 'xhigh' });
+    await streamText({ model, prompt: 'hi', maxRetries: 0 }).text;
+
+    const call = fetchMock.mock.calls[0]!;
+    expect(headerValue(call, 'x-relay-google-thinking-level')).toBeNull();
+    const envelope = await requestJson(call);
+    const request = envelope.request as { generationConfig?: { thinkingConfig?: Record<string, unknown> } };
+    expect(request.generationConfig?.thinkingConfig).toEqual({
+      thinkingLevel: 'xhigh',
+      includeThoughts: true,
+    });
+  });
+
   it('forwards sanitized transport diagnostics through the Cloud Code route', async () => {
     seedAntigravity();
     const PROMPT_CANARY = 'what-is-the-weather-canary-zzz';

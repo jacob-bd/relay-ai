@@ -8,6 +8,7 @@ import {
   deepMergeProviderOptions,
   effortProviderOptions,
   getReasoningCapabilities,
+  GOOGLE_THINKING_LEVEL_HEADER,
   isSdkMigratedNpm,
   maxToolsForNpm,
   modelPrefersResponsesApi,
@@ -17,6 +18,7 @@ import {
   shouldUseOpenAiResponsesEndpoint,
   thinkingProviderOptions,
   withProviderRequestDefaults,
+  wrapGoogleThinkingLevelFetch,
 } from '../src/provider-factory.js';
 import { VERTEX_ANTHROPIC_NPM } from '../src/constants.js';
 import { clearRememberedProtocols } from '../src/gateway-protocol.js';
@@ -357,6 +359,23 @@ describe('declared-first effort resolution', () => {
     expect(caps.source).toBe('provider-rule');
     expect(effortProviderOptions('@ai-sdk/google', 'high', 'gemini-4-argon-medium'))
       .toEqual({ google: { thinkingConfig: { thinkingLevel: 'high', includeThoughts: true } } });
+  });
+
+  it('exposes Extra (xhigh) on Gemini 4 Hydrogen for both Google SDK and bridged Antigravity', () => {
+    const googleCaps = getReasoningCapabilities('@ai-sdk/google', 'gemini-4-hydrogen-medium');
+    expect(googleCaps.levels).toEqual(['low', 'medium', 'high', 'xhigh']);
+    expect(googleCaps.defaultLevel).toBe('medium');
+    expect(effortProviderOptions('@ai-sdk/google', 'xhigh', 'gemini-4-hydrogen-medium'))
+      .toEqual({ google: { thinkingConfig: { thinkingLevel: 'xhigh', includeThoughts: true } } });
+
+    const bridgedCaps = getReasoningCapabilities('@ai-sdk/anthropic', 'gemini-4-hydrogen-medium', {
+      providerId: 'antigravity',
+      upstreamModelId: 'anthropic-antigravity__gemini-4-hydrogen-medium',
+    });
+    expect(bridgedCaps.levels).toEqual(['low', 'medium', 'high', 'xhigh']);
+    expect(effortProviderOptions('@ai-sdk/anthropic', 'xhigh', 'anthropic-antigravity__gemini-4-hydrogen-medium', {
+      providerId: 'antigravity',
+    })).toEqual({ anthropic: { effort: 'xhigh' } });
   });
 
   it('keeps Gemini 2.5 on its budget mapping even when effort levels are declared', () => {
@@ -1107,6 +1126,47 @@ describe('OpenAI conversation identity', () => {
     expect(header).toBe(openAiSessionHeader('thread-a'));
     expect(header).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(header).not.toBe(openAiSessionHeader('thread-b'));
+  });
+});
+
+describe('Google thinkingLevel xhigh workaround', () => {
+  it('tunnels xhigh past @ai-sdk/google schema validation and restores it on outgoing fetch', async () => {
+    const inner = new MockLanguageModelV4({ doGenerate: async () => { throw new Error('captured'); } });
+    const model = withProviderRequestDefaults(inner, {
+      npm: '@ai-sdk/google',
+      modelId: 'gemini-4-hydrogen-xhigh',
+      apiKey: 'test-key',
+    });
+
+    await expect((model as unknown as MockLanguageModelV4).doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      providerOptions: { google: { thinkingConfig: { thinkingLevel: 'xhigh', includeThoughts: true } } },
+    } as never)).rejects.toThrow('captured');
+
+    const call = inner.doGenerateCalls[0]!;
+    expect((call.providerOptions as any)?.google?.thinkingConfig?.thinkingLevel).toBe('high');
+    expect(call.headers?.[GOOGLE_THINKING_LEVEL_HEADER]).toBe('xhigh');
+
+    const upstream = vi.fn(async () => new Response('{}', { status: 200 }));
+    const wrappedFetch = wrapGoogleThinkingLevelFetch(upstream as unknown as typeof globalThis.fetch);
+    await wrappedFetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-4-hydrogen-xhigh:generateContent', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [GOOGLE_THINKING_LEVEL_HEADER]: 'xhigh',
+      },
+      body: JSON.stringify({
+        generationConfig: { thinkingConfig: { thinkingLevel: 'high', includeThoughts: true } },
+      }),
+    });
+
+    expect(upstream).toHaveBeenCalledTimes(1);
+    const [, init] = upstream.mock.calls[0] as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(headers.get(GOOGLE_THINKING_LEVEL_HEADER)).toBeNull();
+    expect(JSON.parse(String(init.body))).toEqual({
+      generationConfig: { thinkingConfig: { thinkingLevel: 'xhigh', includeThoughts: true } },
+    });
   });
 });
 

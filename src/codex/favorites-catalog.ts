@@ -32,9 +32,15 @@ export function buildFavoritesCodexCatalog(
 
 function enrichFavoriteModel(r: ResolvedFavorite): LocalProviderModel {
   const model = r.model as LocalProviderModel;
+  const wireId = (model.upstreamModelId || model.id).toLowerCase();
+  const fallbackNpm = model.modelFormat === 'anthropic'
+    ? '@ai-sdk/anthropic'
+    : model.modelFormat === 'cloud-code' && wireId.includes('gemini-')
+      ? '@ai-sdk/google'
+      : '@ai-sdk/openai-compatible';
   return {
     ...model,
-    npm: model.npm ?? (model.modelFormat === 'anthropic' ? '@ai-sdk/anthropic' : '@ai-sdk/openai-compatible'),
+    npm: model.npm ?? fallbackNpm,
     upstreamModelId: model.upstreamModelId || model.id,
   };
 }

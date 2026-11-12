@@ -73,6 +73,28 @@ describe('anthropicToCloudCode', () => {
     expect((envelope.request as any).generationConfig.thinkingConfig).toBeUndefined();
   });
 
+  it('forwards Extra (xhigh) and lower efforts on Gemini 4 Hydrogen', () => {
+    const xhighEnvelope = anthropicToCloudCode({
+      max_tokens: 32000,
+      output_config: { effort: 'xhigh' },
+      messages: [{ role: 'user', content: 'think extra hard' }],
+    }, 'gemini-4-hydrogen-medium', 'project-id');
+    expect((xhighEnvelope.request as any).generationConfig.thinkingConfig).toEqual({
+      thinkingLevel: 'xhigh',
+      includeThoughts: true,
+    });
+
+    const maxEnvelope = anthropicToCloudCode({
+      max_tokens: 32000,
+      output_config: { effort: 'max' },
+      messages: [{ role: 'user', content: 'max effort' }],
+    }, 'gemini-4-hydrogen-xhigh', 'project-id');
+    expect((maxEnvelope.request as any).generationConfig.thinkingConfig).toEqual({
+      thinkingLevel: 'xhigh',
+      includeThoughts: true,
+    });
+  });
+
   it('strips JSON Schema validation keywords rejected by Cloud Code tools', () => {
     const envelope = anthropicToCloudCode({
       max_tokens: 64,

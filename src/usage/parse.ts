@@ -85,8 +85,9 @@ export function parseChatGptUsage(payload: unknown): { windows: RelayUsageWindow
 
 type AntigravityPool = 'gemini-4' | 'gemini' | 'shared';
 
-/** Gemini 4 has its own allowance on pro accounts, so it never merges with another bucket. */
+/** Gemini 4 Hydrogen shares the main Gemini pool; Gemini 4 Argon (and other separate 4.x tiers) keep their own bucket. */
 function antigravityPool(modelId: string): AntigravityPool {
+  if (/^gemini-4-hydrogen(?:[.-]|$)/.test(modelId)) return 'gemini';
   if (/^gemini-4(?:[.-]|$)/.test(modelId)) return 'gemini-4';
   if (modelId.startsWith('gemini')) return 'gemini';
   return 'shared';
@@ -97,6 +98,90 @@ function antigravityGroupLabel(pool: AntigravityPool, modelIds: string[]): strin
   if (pool === 'gemini') return 'Gemini models';
   const brands = new Set(modelIds.map(id => id.startsWith('claude') ? 'Claude' : id.startsWith('gpt') ? 'GPT' : 'Other'));
   return `${[...brands].join(' / ')} models`;
+}
+
+function antigravityWindowInfo(rawWindow: unknown): { tag?: string; seconds?: number } {
+  const value = typeof rawWindow === 'string' ? rawWindow.trim().toLowerCase() : '';
+  if (!value) return {};
+  if (value === '5h' || value === 'five_hour') return { tag: '5h', seconds: FIVE_HOURS };
+  if (value === 'weekly' || value === '7d' || value === 'week') return { tag: 'weekly', seconds: SEVEN_DAYS };
+  if (value === 'daily' || value === '24h' || value === '1d') return { tag: 'daily', seconds: 86400 };
+  if (value === 'monthly' || value === '30d') return { tag: 'monthly', seconds: THIRTY_DAYS };
+  return { tag: value };
+}
+
+function antigravitySummaryGroupBase(displayName: unknown): string {
+  const raw = typeof displayName === 'string' ? displayName.trim() : '';
+  if (!raw) return 'Antigravity';
+  return raw
+    .replace(/\s+models$/i, '')
+    .replace(/^Claude\s+and\s+GPT$/i, 'Claude / GPT');
+}
+
+function antigravitySummaryFamily(groupName: string, bucketId: string): string {
+  const lower = `${groupName} ${bucketId}`.toLowerCase();
+  if (lower.includes('argon')) return 'gemini-4-argon';
+  if (lower.includes('carbon')) return 'gemini-4-carbon';
+  if (lower.includes('gemini')) return 'gemini';
+  if (lower.includes('claude') || lower.includes('gpt') || lower.includes('3p')) return 'shared';
+  return bucketId || 'antigravity';
+}
+
+/**
+ * Antigravity: `POST /v1internal:retrieveUserQuotaSummary` returns the canonical quota groups and
+ * time windows (`5h`, `weekly`, plus plan-specific pools like `Gemini 4 Argon`) shown in Antigravity's UI.
+ */
+export function parseAntigravityQuotaSummary(payload: unknown): RelayUsageWindow[] | null {
+  const groups = obj(payload)?.['groups'];
+  if (!Array.isArray(groups)) return null;
+
+  const windows: RelayUsageWindow[] = [];
+  for (const rawGroup of groups) {
+    const group = obj(rawGroup);
+    const buckets = group?.['buckets'];
+    if (!Array.isArray(buckets)) continue;
+
+    const rawGroupName = typeof group?.['displayName'] === 'string' ? group['displayName'].trim() : '';
+    const baseLabel = antigravitySummaryGroupBase(rawGroupName);
+    const groupWindows: RelayUsageWindow[] = [];
+
+    for (const rawBucket of buckets) {
+      const bucket = obj(rawBucket);
+      if (!bucket) continue;
+      const remaining = bucket['remainingFraction'];
+      if (typeof remaining !== 'number' || !Number.isFinite(remaining)) continue;
+      const clamped = Math.min(1, Math.max(0, remaining));
+      const bucketId = typeof bucket['bucketId'] === 'string' && bucket['bucketId'].trim()
+        ? bucket['bucketId'].trim()
+        : `${baseLabel}:${groupWindows.length}`;
+      const { tag, seconds } = antigravityWindowInfo(bucket['window']);
+      const bucketDisplay = typeof bucket['displayName'] === 'string' ? bucket['displayName'].trim() : '';
+      const label = tag
+        ? `${baseLabel} (${tag})`
+        : bucketDisplay && !bucketDisplay.toLowerCase().startsWith(baseLabel.toLowerCase())
+          ? `${baseLabel} (${bucketDisplay})`
+          : baseLabel;
+
+      groupWindows.push({
+        id: `bucket:${bucketId}`,
+        label,
+        usedPercent: round((1 - clamped) * 100),
+        resetsAt: toIsoTime(bucket['resetTime']),
+        ...(seconds !== undefined ? { windowSeconds: seconds } : {}),
+        scope: {
+          type: 'model-group',
+          family: antigravitySummaryFamily(rawGroupName || baseLabel, bucketId),
+          modelIds: [],
+        },
+      });
+    }
+
+    // Show shorter windows (e.g. 5h) before longer ones (e.g. weekly) within each group.
+    groupWindows.sort((a, b) => (a.windowSeconds ?? Number.MAX_SAFE_INTEGER) - (b.windowSeconds ?? Number.MAX_SAFE_INTEGER));
+    windows.push(...groupWindows);
+  }
+
+  return windows.length ? windows : null;
 }
 
 /**

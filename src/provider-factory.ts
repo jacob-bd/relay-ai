@@ -191,6 +191,138 @@ export function createOpenRouterFetch(
   };
 }
 
+/**
+ * `@ai-sdk/google` restricts `google.thinkingConfig.thinkingLevel` to
+ * `minimal | low | medium | high` in its client-side Zod schema, while
+ * Gemini 4 Hydrogen also accepts `"xhigh"` (Extra). Carry `"xhigh"` across the
+ * SDK boundary via an internal request header, pass `"high"` to the SDK schema,
+ * and restore `"xhigh"` right before serialization while stripping the header.
+ */
+export const GOOGLE_THINKING_LEVEL_HEADER = 'x-relay-google-thinking-level';
+
+function stripHeaderEntry(
+  headers: HeadersInit | undefined,
+  headerName: string,
+): { value: string | undefined; headers: HeadersInit | undefined } {
+  if (!headers) return { value: undefined, headers };
+  const target = headerName.toLowerCase();
+  if (headers instanceof Headers) {
+    const value = headers.get(headerName) ?? undefined;
+    if (!headers.has(headerName)) return { value, headers };
+    const next = new Headers(headers);
+    next.delete(headerName);
+    return { value, headers: next };
+  }
+  if (Array.isArray(headers)) {
+    let value: string | undefined;
+    const next: [string, string][] = [];
+    for (const [k, v] of headers) {
+      if (k.toLowerCase() === target) value = v;
+      else next.push([k, v]);
+    }
+    return { value, headers: value !== undefined ? next : headers };
+  }
+  let value: string | undefined;
+  let found = false;
+  const next: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === target) {
+      value = v;
+      found = true;
+    } else if (v !== undefined) {
+      next[k] = v;
+    }
+  }
+  return { value, headers: found ? next : headers };
+}
+
+export function extractGoogleThinkingLevelHeader(
+  init?: RequestInit,
+  input?: RequestInfo | URL,
+): { level: string | undefined; init: RequestInit | undefined } {
+  const fromInit = stripHeaderEntry(init?.headers, GOOGLE_THINKING_LEVEL_HEADER);
+  if (fromInit.value !== undefined) {
+    return {
+      level: fromInit.value,
+      init: { ...init, headers: fromInit.headers },
+    };
+  }
+  if (typeof Request !== 'undefined' && input instanceof Request && input.headers.has(GOOGLE_THINKING_LEVEL_HEADER)) {
+    const level = input.headers.get(GOOGLE_THINKING_LEVEL_HEADER) ?? undefined;
+    const headers = new Headers(init?.headers ?? input.headers);
+    headers.delete(GOOGLE_THINKING_LEVEL_HEADER);
+    return { level, init: { ...init, headers } };
+  }
+  return { level: undefined, init };
+}
+
+export function applyGoogleThinkingLevelToBody(
+  body: unknown,
+  thinkingLevel: string | undefined,
+): void {
+  if (!thinkingLevel || !body || typeof body !== 'object' || Array.isArray(body)) return;
+  const record = body as Record<string, unknown>;
+  const rawGen = record.generationConfig;
+  const gen = (rawGen && typeof rawGen === 'object' && !Array.isArray(rawGen))
+    ? (rawGen as Record<string, unknown>)
+    : {};
+  const rawThinking = gen.thinkingConfig;
+  const thinking = (rawThinking && typeof rawThinking === 'object' && !Array.isArray(rawThinking))
+    ? (rawThinking as Record<string, unknown>)
+    : {};
+  record.generationConfig = {
+    ...gen,
+    thinkingConfig: { ...thinking, thinkingLevel },
+  };
+}
+
+export function wrapGoogleThinkingLevelFetch(
+  fetchImpl: typeof globalThis.fetch = globalThis.fetch,
+): typeof globalThis.fetch {
+  return async (input, init) => {
+    const { level, init: cleanInit } = extractGoogleThinkingLevelHeader(init, input);
+    if (!level || !cleanInit || typeof cleanInit.body !== 'string') {
+      return fetchImpl(input, cleanInit);
+    }
+    try {
+      const parsed = JSON.parse(cleanInit.body);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        applyGoogleThinkingLevelToBody(parsed as Record<string, unknown>, level);
+        return fetchImpl(input, { ...cleanInit, body: JSON.stringify(parsed) });
+      }
+    } catch {
+      // Non-JSON body — forward with internal header already stripped.
+    }
+    return fetchImpl(input, cleanInit);
+  };
+}
+
+function encodeGoogleThinkingLevelWorkaround<
+  T extends { providerOptions?: unknown; headers?: Record<string, string | undefined> },
+>(params: T): T {
+  const opts = params.providerOptions as Record<string, Record<string, unknown>> | undefined;
+  const googleOpts = opts?.google;
+  const thinkingConfig = googleOpts?.thinkingConfig as Record<string, unknown> | undefined;
+  if (thinkingConfig?.thinkingLevel !== 'xhigh') return params;
+  return {
+    ...params,
+    headers: {
+      ...params.headers,
+      [GOOGLE_THINKING_LEVEL_HEADER]: 'xhigh',
+    },
+    providerOptions: {
+      ...opts,
+      google: {
+        ...googleOpts,
+        thinkingConfig: {
+          ...thinkingConfig,
+          thinkingLevel: 'high',
+        },
+      },
+    },
+  };
+}
+
 function findCreateFactory(mod: Record<string, unknown>): SdkProviderFactory {
   for (const value of Object.values(mod)) {
     if (typeof value === 'function' && value.name.startsWith('create')) {
@@ -283,7 +415,7 @@ async function createLanguageModelSingle(spec: ProviderModelSpec): Promise<Langu
   // produces .../v1beta/openai/models/...:streamGenerateContent → 404.
   if (npm === '@ai-sdk/google') {
     const { createGoogleGenerativeAI } = await import('@ai-sdk/google');
-    const google = createGoogleGenerativeAI({ apiKey, fetch: activityFetch() });
+    const google = createGoogleGenerativeAI({ apiKey, fetch: wrapGoogleThinkingLevelFetch(activityFetch()) });
     return google(modelId);
   }
   // Registry stores root URL (no /v1) for GET /v1/models discovery — passing it here
@@ -768,7 +900,11 @@ export function withProviderRequestDefaults(model: LanguageModel, spec: Provider
         if (npm === '@ai-sdk/alibaba' && prompt.at(-1)?.role === 'tool') {
           prompt = [...prompt, { role: 'user', content: [{ type: 'text', text: 'Continue.' }] }];
         }
-        const prepared = { ...params, prompt, providerOptions: providerOptions as typeof params.providerOptions };
+        const prepared = encodeGoogleThinkingLevelWorkaround({
+          ...params,
+          prompt,
+          providerOptions: providerOptions as typeof params.providerOptions,
+        });
         return anthropicCaching ? applyAnthropicPromptCaching(prepared) : prepared;
       },
     },
@@ -875,6 +1011,7 @@ const ANTHROPIC_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
 const OPENAI_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
 const OPENAI_XHIGH_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
 const GEMINI_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
+const GEMINI_HYDROGEN_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
 /**
  * Mistral accepts `high` or no effort at all. Advertise `none`, not `off`:
  * Codex App's effort vocabulary has no `off` and drops it, which broke the
@@ -941,6 +1078,8 @@ const GENERIC_EFFORT_VOCAB = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh
 const ANTHROPIC_WIRE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 /** Gemini 3-class `thinkingLevel` vocabulary (SDK-typed: minimal..high). */
 const GEMINI_DECLARED_EFFORT_LEVELS = ['minimal', 'low', 'medium', 'high'] as const;
+/** Gemini 4 Hydrogen adds `xhigh` (`Extra`) to the thinkingLevel vocabulary. */
+const GEMINI_HYDROGEN_DECLARED_EFFORT_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
 /** Values the Groq/Cerebras `reasoningEffort` provider option accepts. */
 const GROQ_CEREBRAS_WIRE_EFFORT_LEVELS = ['none', 'low', 'medium', 'high'] as const;
 /** Values the Perplexity `reasoning_effort` provider option accepts. */
@@ -954,6 +1093,7 @@ function wireVocabulary(vocab: readonly string[]): (value: string) => string | u
 
 const normalizeAnthropicDeclared = wireVocabulary(ANTHROPIC_WIRE_EFFORT_LEVELS);
 const normalizeGeminiDeclared = wireVocabulary(GEMINI_DECLARED_EFFORT_LEVELS);
+const normalizeGeminiHydrogenDeclared = wireVocabulary(GEMINI_HYDROGEN_DECLARED_EFFORT_LEVELS);
 const normalizeMistralDeclared = wireVocabulary(MISTRAL_EFFORT_LEVELS);
 const normalizeGroqDeclared = wireVocabulary(GROQ_CEREBRAS_WIRE_EFFORT_LEVELS);
 const normalizePerplexityDeclared = wireVocabulary(PERPLEXITY_WIRE_EFFORT_LEVELS);
@@ -1081,8 +1221,40 @@ function isClaudeReasoningModel(modelId: string): boolean {
   return major > 4 || (major === 4 && minor >= 6);
 }
 
+function stripGeminiRoutePrefix(modelId: string): string {
+  const trimmed = modelId.toLowerCase().trim();
+  const sep = trimmed.indexOf('__');
+  const bare = sep >= 0 ? trimmed.slice(sep + 2) : trimmed;
+  return bare.startsWith('models/') ? bare.slice('models/'.length) : bare;
+}
+
+/**
+ * Gemini 4 Hydrogen adds an `Extra` (`xhigh`) thinkingLevel rung beyond
+ * the standard Gemini 3/4 `low | medium | high` ladder. Other Gemini 3/4
+ * models (e.g. Gemini 4 Argon, Gemini 3.8 Flash) reject `"xhigh"` with 400.
+ */
+export function isGeminiHydrogenModel(modelId: string): boolean {
+  const bare = stripGeminiRoutePrefix(modelId);
+  return bare === 'gemini-4-hydrogen'
+    || bare.startsWith('gemini-4-hydrogen-')
+    || bare.startsWith('gemini-4-hydrogen[');
+}
+
+function isBridgedAntigravityGeminiHydrogen(
+  npm: string,
+  modelId: string,
+  metadata?: ReasoningMetadata,
+): boolean {
+  if (npm !== '@ai-sdk/anthropic') return false;
+  const candidate = metadata?.upstreamModelId ?? modelId;
+  const isAntigravity = (metadata?.providerId !== undefined && isProviderKind(metadata.providerId, 'antigravity'))
+    || candidate.toLowerCase().startsWith('anthropic-antigravity__')
+    || modelId.toLowerCase().startsWith('anthropic-antigravity__');
+  return isAntigravity && (isGeminiHydrogenModel(candidate) || isGeminiHydrogenModel(modelId));
+}
+
 function isGeminiReasoningModel(modelId: string): boolean {
-  const lower = modelId.toLowerCase();
+  const lower = stripGeminiRoutePrefix(modelId);
   return lower.startsWith('gemini-2.5-')
     || lower.startsWith('gemini-3')
     || lower.startsWith('gemini-3.')
@@ -1091,7 +1263,7 @@ function isGeminiReasoningModel(modelId: string): boolean {
 }
 
 function isGemini3Model(modelId: string): boolean {
-  const lower = modelId.toLowerCase();
+  const lower = stripGeminiRoutePrefix(modelId);
   return lower.startsWith('gemini-3')
     || lower.startsWith('gemini-3.')
     || lower.startsWith('gemini-4')
@@ -1568,6 +1740,24 @@ function mapCodexEffortToGeminiLevel(effort: string): 'low' | 'medium' | 'high' 
   }
 }
 
+export function mapCodexEffortToGeminiHydrogenLevel(effort: string): 'low' | 'medium' | 'high' | 'xhigh' | undefined {
+  switch (effort) {
+    case 'none':
+    case 'minimal':
+    case 'low':
+      return 'low';
+    case 'medium':
+      return 'medium';
+    case 'high':
+      return 'high';
+    case 'xhigh':
+    case 'max':
+      return 'xhigh';
+    default:
+      return undefined;
+  }
+}
+
 function mapCodexEffortToGeminiBudget(effort: string): number | undefined {
   const direct = GEMINI_25_BUDGETS[effort];
   if (direct !== undefined) return direct > 0 ? direct : undefined;
@@ -1651,6 +1841,17 @@ function resolveRawReasoningCapabilities(
   }
 
   if (npm === '@ai-sdk/anthropic' || id.startsWith('claude-')) {
+    if (isBridgedAntigravityGeminiHydrogen(npm, modelId, metadata)) {
+      return {
+        levels: [...GEMINI_HYDROGEN_EFFORT_LEVELS],
+        defaultLevel: 'medium',
+        supportsSummaries: true,
+        mode: 'controllable',
+        source: 'provider-rule',
+        confidence: 'documented',
+        wireFormat: { kind: 'google-thinking-config' },
+      };
+    }
     const isClaude = isClaudeReasoningModel(modelId);
     const declared = declaredEffortLevels(metadata, normalizeAnthropicDeclared);
     if (isClaude || metadata?.reasoning || declared.length > 0) {
@@ -1701,11 +1902,20 @@ function resolveRawReasoningCapabilities(
   }
 
   if (npm === '@ai-sdk/google' || id.startsWith('gemini-')) {
-    const declared = declaredEffortLevels(metadata, normalizeGeminiDeclared);
+    const hydrogen = isGeminiHydrogenModel(modelId);
+    const declared = declaredEffortLevels(
+      metadata,
+      hydrogen ? normalizeGeminiHydrogenDeclared : normalizeGeminiDeclared,
+    );
     const isGemini = isGeminiReasoningModel(modelId);
     // Gemini 2.5 controls thinking with a token budget, not a level — a
     // declared effort row there (any reseller can add one) does not apply.
-    const budgetEra = /^gemini-2[.-]5/.test(id);
+    const budgetEra = /^gemini-2[.-]5/.test(stripGeminiRoutePrefix(modelId));
+    const ruleLevels = !isGemini
+      ? null
+      : hydrogen
+        ? GEMINI_HYDROGEN_EFFORT_LEVELS
+        : GEMINI_EFFORT_LEVELS;
     if (declared.length > 0 || isGemini) {
       // Google publishes the accepted `thinkingLevel` set per model, so a
       // declared set IS the ladder (image variants declare subsets). Otherwise
@@ -1713,7 +1923,7 @@ function resolveRawReasoningCapabilities(
       const levels = declared.length > 0 && !budgetEra
         ? declared
         : unionEffortLevels(
-          isGemini ? GEMINI_EFFORT_LEVELS : null,
+          ruleLevels,
           budgetEra ? [] : declared,
           npm,
           modelId,
@@ -1987,6 +2197,10 @@ export function effortProviderOptions(
 
   if (npm === '@ai-sdk/anthropic' || npm === VERTEX_ANTHROPIC_NPM) {
     if (!modelId) return undefined;
+    if (isBridgedAntigravityGeminiHydrogen(npm, modelId, metadata)) {
+      const mapped = mapCodexEffortToGeminiHydrogenLevel(effort);
+      return mapped ? { anthropic: { effort: mapped } } : undefined;
+    }
     // Effort rides the SDK's top-level `anthropic.effort` (which it emits as
     // `output_config.effort`). It used to be nested inside `thinking`, where
     // the provider option schema silently stripped it — the selected level
@@ -2009,10 +2223,20 @@ export function effortProviderOptions(
 
   if (npm === '@ai-sdk/google') {
     const id = modelId ?? '';
-    const declared = declaredEffortLevels(metadata, normalizeGeminiDeclared);
-    if (declared.length > 0 && !/^gemini-2[.-]5/.test(id.toLowerCase())) {
+    const hydrogen = isGeminiHydrogenModel(id);
+    const declared = declaredEffortLevels(
+      metadata,
+      hydrogen ? normalizeGeminiHydrogenDeclared : normalizeGeminiDeclared,
+    );
+    if (declared.length > 0 && !/^gemini-2[.-]5/.test(stripGeminiRoutePrefix(id))) {
       if (!declared.includes(effort)) return undefined;
       return { google: { thinkingConfig: { thinkingLevel: effort, includeThoughts: true } } };
+    }
+    if (hydrogen) {
+      const thinkingLevel = mapCodexEffortToGeminiHydrogenLevel(effort);
+      return thinkingLevel
+        ? { google: { thinkingConfig: { thinkingLevel, includeThoughts: true } } }
+        : undefined;
     }
     if (isGemini3Model(id)) {
       const thinkingLevel = mapCodexEffortToGeminiLevel(effort);

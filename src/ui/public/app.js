@@ -598,7 +598,7 @@ function usageWindowHtml(w) {
     <div class="usage-row" ${models ? `title="${escapeHtml(models)}"` : ''}>
       <span class="usage-label">${escapeHtml(w.label)}</span>
       <span class="usage-bar ${level}"><span style="width:${pct ?? 0}%"></span></span>
-      <span class="usage-pct">${pct == null ? '—' : `${Math.round(pct)}%`}</span>
+      <span class="usage-pct">${pct == null ? '—' : `${Math.round(pct)}% used`}</span>
       <span class="usage-reset">${escapeHtml((w.resetsAt ? usageRelative(w.resetsAt, true) : '') + counts)}</span>
     </div>`;
 }

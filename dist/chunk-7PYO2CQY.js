@@ -15,7 +15,7 @@ import {
   splitToolUseId,
   sseChunk,
   thinkingProviderOptions
-} from "./chunk-S23YQBOY.js";
+} from "./chunk-HWZBCTO3.js";
 import {
   MAX_MODEL_CATALOG
 } from "./chunk-VWAB7443.js";
@@ -776,4 +776,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-A7QRQQKE.js.map
+//# sourceMappingURL=chunk-7PYO2CQY.js.map

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  parseAntigravityUsage, parseChatGptUsage, parseClaudeUsage, parseCopilotUsage, parseXaiUsage, toIsoTime,
+  parseAntigravityQuotaSummary, parseAntigravityUsage, parseChatGptUsage, parseClaudeUsage, parseCopilotUsage, parseXaiUsage, toIsoTime,
 } from '../src/usage/parse.js';
 
 describe('toIsoTime', () => {
@@ -131,8 +131,70 @@ describe('parseAntigravityUsage', () => {
     expect(windows?.[0]).toMatchObject({ label: 'Claude models', usedPercent: 84.7 });
   });
 
+  it('merges Gemini 4 Hydrogen into Gemini models instead of duplicating Gemini 4 rows', () => {
+    const windows = parseAntigravityUsage([{
+      models: {
+        'gemini-4-argon-high': quota(0.5846, '2026-11-14T20:15:28Z'),
+        'gemini-4-hydrogen-high': quota(0.6557, '2026-11-12T20:18:16Z'),
+        'gemini-4-hydrogen-medium': quota(0.6557, '2026-11-12T20:18:16Z'),
+        'gemini-3.8-flash-high': quota(0.6557, '2026-11-12T20:18:16Z'),
+      },
+    }]);
+    expect(windows?.map(w => [w.label, w.usedPercent, w.resetsAt])).toEqual([
+      ['Gemini 4 models', 41.54, '2026-11-14T20:15:28.000Z'],
+      ['Gemini models', 34.43, '2026-11-12T20:18:16.000Z'],
+    ]);
+    expect(windows?.[1]?.scope).toEqual({
+      type: 'model-group',
+      family: 'gemini',
+      modelIds: ['gemini-3.8-flash-high', 'gemini-4-hydrogen-high', 'gemini-4-hydrogen-medium'],
+    });
+  });
+
   it('returns null when no response carries quota', () => {
     expect(parseAntigravityUsage([{ models: {} }, null, { error: {} }])).toBeNull();
+  });
+});
+
+describe('parseAntigravityQuotaSummary', () => {
+  it('maps retrieveUserQuotaSummary groups and buckets with 5h before weekly', () => {
+    const windows = parseAntigravityQuotaSummary({
+      groups: [
+        {
+          displayName: 'Gemini Models',
+          buckets: [
+            { bucketId: 'gemini-weekly', displayName: 'Weekly Limit Remaining', window: 'weekly', resetTime: '2026-11-14T00:08:02Z', remainingFraction: 0.3428 },
+            { bucketId: 'gemini-5h', displayName: 'Five Hour Limit Remaining', window: '5h', resetTime: '2026-11-12T20:18:16Z', remainingFraction: 0.6391 },
+          ],
+        },
+        {
+          displayName: 'Claude and GPT models',
+          buckets: [
+            { bucketId: '3p-weekly', displayName: 'Weekly Limit Remaining', window: 'weekly', resetTime: '2026-11-19T19:21:21Z', remainingFraction: 1 },
+            { bucketId: '3p-5h', displayName: 'Five Hour Limit Remaining', window: '5h', resetTime: '2026-11-13T00:21:21Z', remainingFraction: 1 },
+          ],
+        },
+        {
+          displayName: 'Gemini 4 Argon',
+          buckets: [
+            { bucketId: 'gemini-argon-wtu-weekly', displayName: 'Gemini 4 Argon Weekly Limit', window: 'weekly', resetTime: '2026-11-14T20:15:28Z', remainingFraction: 0.5846 },
+          ],
+        },
+      ],
+    });
+    expect(windows).toEqual([
+      { id: 'bucket:gemini-5h', label: 'Gemini (5h)', usedPercent: 36.09, resetsAt: '2026-11-12T20:18:16.000Z', windowSeconds: 18000, scope: { type: 'model-group', family: 'gemini', modelIds: [] } },
+      { id: 'bucket:gemini-weekly', label: 'Gemini (weekly)', usedPercent: 65.72, resetsAt: '2026-11-14T00:08:02.000Z', windowSeconds: 604800, scope: { type: 'model-group', family: 'gemini', modelIds: [] } },
+      { id: 'bucket:3p-5h', label: 'Claude / GPT (5h)', usedPercent: 0, resetsAt: '2026-11-13T00:21:21.000Z', windowSeconds: 18000, scope: { type: 'model-group', family: 'shared', modelIds: [] } },
+      { id: 'bucket:3p-weekly', label: 'Claude / GPT (weekly)', usedPercent: 0, resetsAt: '2026-11-19T19:21:21.000Z', windowSeconds: 604800, scope: { type: 'model-group', family: 'shared', modelIds: [] } },
+      { id: 'bucket:gemini-argon-wtu-weekly', label: 'Gemini 4 Argon (weekly)', usedPercent: 41.54, resetsAt: '2026-11-14T20:15:28.000Z', windowSeconds: 604800, scope: { type: 'model-group', family: 'gemini-4-argon', modelIds: [] } },
+    ]);
+  });
+
+  it('returns null when groups are missing or empty', () => {
+    expect(parseAntigravityQuotaSummary({ models: {} })).toBeNull();
+    expect(parseAntigravityQuotaSummary({ groups: [] })).toBeNull();
+    expect(parseAntigravityQuotaSummary(null)).toBeNull();
   });
 });
 

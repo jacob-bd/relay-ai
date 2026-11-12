@@ -10,20 +10,22 @@ import {
   resolveReasoningProviderOptions,
   withReasoningProviderOptions,
   withRequestHeaders
-} from "./chunk-YZCZRCSM.js";
+} from "./chunk-OKSVQXT5.js";
 import {
   openCodeGoHeaders,
   providerRefreshToken,
   reconcileCachedModelProtocol
-} from "./chunk-ZLWY63DU.js";
+} from "./chunk-RPTGNMJP.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
 import {
+  applyGoogleThinkingLevelToBody,
   createLanguageModel,
+  extractGoogleThinkingLevelHeader,
   getProviderModels,
   withProviderRequestDefaults
-} from "./chunk-S23YQBOY.js";
+} from "./chunk-HWZBCTO3.js";
 import {
   ANTIGRAVITY_API_VERSION,
   ANTIGRAVITY_BASE_URLS,
@@ -260,8 +262,10 @@ function createCloudCodeFetch(options, fetchImpl) {
     };
     const url = requestUrl(input);
     const streaming = url.includes("streamGenerateContent");
-    const signal = init?.signal ?? (input instanceof Request ? input.signal : void 0);
-    const geminiBody = await readJsonBody(input, init);
+    const { level: thinkingLevel, init: cleanInit } = extractGoogleThinkingLevelHeader(init, input);
+    const signal = cleanInit?.signal ?? (input instanceof Request ? input.signal : void 0);
+    const geminiBody = await readJsonBody(input, cleanInit);
+    applyGoogleThinkingLevelToBody(geminiBody, thinkingLevel);
     if (options.onDebug) debug(`fingerprint ${JSON.stringify(requestFingerprint(geminiBody))}`);
     const envelope = {
       project: options.projectId,
@@ -592,4 +596,4 @@ export {
   withPortableToolSchemas,
   createRelayModel
 };
-//# sourceMappingURL=chunk-DUZF2HXM.js.map
+//# sourceMappingURL=chunk-DSHYQH7Y.js.map

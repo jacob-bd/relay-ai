@@ -6,7 +6,11 @@
 
 import { randomUUID } from 'node:crypto';
 import type { LanguageModel } from 'ai';
-import { withProviderRequestDefaults } from '../provider-factory.js';
+import {
+  applyGoogleThinkingLevelToBody,
+  extractGoogleThinkingLevelHeader,
+  withProviderRequestDefaults,
+} from '../provider-factory.js';
 import { observeCloudCodeBody, requestFingerprint } from './antigravity-diagnostics.js';
 import {
   ANTIGRAVITY_API_VERSION,
@@ -127,8 +131,10 @@ export function createCloudCodeFetch(
     };
     const url = requestUrl(input);
     const streaming = url.includes('streamGenerateContent');
-    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
-    const geminiBody = await readJsonBody(input, init);
+    const { level: thinkingLevel, init: cleanInit } = extractGoogleThinkingLevelHeader(init, input);
+    const signal = cleanInit?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const geminiBody = await readJsonBody(input, cleanInit);
+    applyGoogleThinkingLevelToBody(geminiBody, thinkingLevel);
     if (options.onDebug) debug(`fingerprint ${JSON.stringify(requestFingerprint(geminiBody))}`);
     const envelope = {
       project: options.projectId,

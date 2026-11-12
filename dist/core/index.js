@@ -16,7 +16,7 @@ import {
   resolveProviderCredential,
   resolveProviderOAuthAccountId,
   toRelayRouteId
-} from "./chunk-7NAP5ADH.js";
+} from "./chunk-BBCQV3SU.js";
 import {
   getAppHome
 } from "./chunk-EH4R3WCO.js";
@@ -93,6 +93,7 @@ function parseChatGptUsage(payload) {
   return { windows, limitReached: rate["limit_reached"] === true || rate["allowed"] === false };
 }
 function antigravityPool(modelId) {
+  if (/^gemini-4-hydrogen(?:[.-]|$)/.test(modelId)) return "gemini";
   if (/^gemini-4(?:[.-]|$)/.test(modelId)) return "gemini-4";
   if (modelId.startsWith("gemini")) return "gemini";
   return "shared";
@@ -102,6 +103,67 @@ function antigravityGroupLabel(pool, modelIds) {
   if (pool === "gemini") return "Gemini models";
   const brands = new Set(modelIds.map((id) => id.startsWith("claude") ? "Claude" : id.startsWith("gpt") ? "GPT" : "Other"));
   return `${[...brands].join(" / ")} models`;
+}
+function antigravityWindowInfo(rawWindow) {
+  const value = typeof rawWindow === "string" ? rawWindow.trim().toLowerCase() : "";
+  if (!value) return {};
+  if (value === "5h" || value === "five_hour") return { tag: "5h", seconds: FIVE_HOURS };
+  if (value === "weekly" || value === "7d" || value === "week") return { tag: "weekly", seconds: SEVEN_DAYS };
+  if (value === "daily" || value === "24h" || value === "1d") return { tag: "daily", seconds: 86400 };
+  if (value === "monthly" || value === "30d") return { tag: "monthly", seconds: THIRTY_DAYS };
+  return { tag: value };
+}
+function antigravitySummaryGroupBase(displayName) {
+  const raw = typeof displayName === "string" ? displayName.trim() : "";
+  if (!raw) return "Antigravity";
+  return raw.replace(/\s+models$/i, "").replace(/^Claude\s+and\s+GPT$/i, "Claude / GPT");
+}
+function antigravitySummaryFamily(groupName, bucketId) {
+  const lower = `${groupName} ${bucketId}`.toLowerCase();
+  if (lower.includes("argon")) return "gemini-4-argon";
+  if (lower.includes("carbon")) return "gemini-4-carbon";
+  if (lower.includes("gemini")) return "gemini";
+  if (lower.includes("claude") || lower.includes("gpt") || lower.includes("3p")) return "shared";
+  return bucketId || "antigravity";
+}
+function parseAntigravityQuotaSummary(payload) {
+  const groups = obj(payload)?.["groups"];
+  if (!Array.isArray(groups)) return null;
+  const windows = [];
+  for (const rawGroup of groups) {
+    const group = obj(rawGroup);
+    const buckets = group?.["buckets"];
+    if (!Array.isArray(buckets)) continue;
+    const rawGroupName = typeof group?.["displayName"] === "string" ? group["displayName"].trim() : "";
+    const baseLabel = antigravitySummaryGroupBase(rawGroupName);
+    const groupWindows = [];
+    for (const rawBucket of buckets) {
+      const bucket = obj(rawBucket);
+      if (!bucket) continue;
+      const remaining = bucket["remainingFraction"];
+      if (typeof remaining !== "number" || !Number.isFinite(remaining)) continue;
+      const clamped = Math.min(1, Math.max(0, remaining));
+      const bucketId = typeof bucket["bucketId"] === "string" && bucket["bucketId"].trim() ? bucket["bucketId"].trim() : `${baseLabel}:${groupWindows.length}`;
+      const { tag, seconds } = antigravityWindowInfo(bucket["window"]);
+      const bucketDisplay = typeof bucket["displayName"] === "string" ? bucket["displayName"].trim() : "";
+      const label = tag ? `${baseLabel} (${tag})` : bucketDisplay && !bucketDisplay.toLowerCase().startsWith(baseLabel.toLowerCase()) ? `${baseLabel} (${bucketDisplay})` : baseLabel;
+      groupWindows.push({
+        id: `bucket:${bucketId}`,
+        label,
+        usedPercent: round((1 - clamped) * 100),
+        resetsAt: toIsoTime(bucket["resetTime"]),
+        ...seconds !== void 0 ? { windowSeconds: seconds } : {},
+        scope: {
+          type: "model-group",
+          family: antigravitySummaryFamily(rawGroupName || baseLabel, bucketId),
+          modelIds: []
+        }
+      });
+    }
+    groupWindows.sort((a, b) => (a.windowSeconds ?? Number.MAX_SAFE_INTEGER) - (b.windowSeconds ?? Number.MAX_SAFE_INTEGER));
+    windows.push(...groupWindows);
+  }
+  return windows.length ? windows : null;
 }
 function parseAntigravityUsage(responses) {
   const perModel = /* @__PURE__ */ new Map();
@@ -358,18 +420,34 @@ async function chatGptUsage(provider, ctx) {
 }
 async function antigravityUsage(provider, ctx) {
   const token = await accessToken(provider);
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    "User-Agent": ANTIGRAVITY_USER_AGENT,
+    "Content-Type": "application/json",
+    Accept: "application/json"
+  };
+  let summaryError;
+  for (const base of ANTIGRAVITY_BASE_URLS) {
+    try {
+      const body = await getJson(ctx, `${base}/v1internal:retrieveUserQuotaSummary`, {
+        method: "POST",
+        headers,
+        body: "{}"
+      }, "Antigravity");
+      const windows2 = parseAntigravityQuotaSummary(body);
+      if (windows2) return { windows: windows2 };
+    } catch (err) {
+      summaryError = err instanceof UsageError ? err : new UsageError("unavailable", "Antigravity usage request failed.");
+      if (summaryError.code === "reauth_required") throw summaryError;
+    }
+  }
   const responses = [];
-  let lastError;
+  let lastError = summaryError;
   for (const base of ANTIGRAVITY_BASE_URLS) {
     try {
       responses.push(await getJson(ctx, `${base}/v1internal:fetchAvailableModels`, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "User-Agent": ANTIGRAVITY_USER_AGENT,
-          "Content-Type": "application/json",
-          Accept: "application/json"
-        },
+        headers,
         body: "{}"
       }, "Antigravity"));
     } catch (err) {

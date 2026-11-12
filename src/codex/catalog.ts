@@ -108,7 +108,9 @@ export function catalogEntryFromModel(
   const context = model.contextWindow ?? DEFAULT_CONTEXT;
   const label = formatCodexModelLabel(model);
   const wireId = model.upstreamModelId ?? model.id;
-  const reasoningFields = codexCatalogReasoningFields(model.npm ?? '', wireId, {
+  const reasoningNpm = model.npm
+    ?? (model.modelFormat === 'cloud-code' && wireId.toLowerCase().includes('gemini-') ? '@ai-sdk/google' : '');
+  const reasoningFields = codexCatalogReasoningFields(reasoningNpm, wireId, {
     apiBaseUrl: model.apiBaseUrl,
     supportedParameters: model.supportedParameters,
     reasoning: model.reasoning,

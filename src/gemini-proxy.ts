@@ -377,11 +377,14 @@ export async function startGeminiProxy(
             ...(requestHeaders ? { requestHeaders } : {}),
           }),
         );
+        const requestedThinkingLevel = typeof body?.generationConfig?.thinkingConfig?.thinkingLevel === 'string'
+          ? body.generationConfig.thinkingConfig.thinkingLevel.trim().toLowerCase()
+          : 'high';
         params.providerOptions = deepMergeProviderOptions(
           params.providerOptions,
           deepMergeProviderOptions(
             thinkingProviderOptions(route.npm || '@ai-sdk/openai-compatible'),
-            effortProviderOptions(route.npm || '@ai-sdk/openai-compatible', 'high', route.realModelId, route),
+            effortProviderOptions(route.npm || '@ai-sdk/openai-compatible', requestedThinkingLevel || 'high', route.realModelId, route),
           ),
         );
         plog(`Translated SDK params:\n${JSON.stringify(params, null, 2)}`);

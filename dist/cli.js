@@ -74,13 +74,13 @@ import {
   supportsClaudeTransparentMode,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-CVJMCGDN.js";
+} from "./chunk-P2E5CTWT.js";
 import {
   extractApiKey,
   readBody,
   sendJson,
   warnDisabledPoolMembers
-} from "./chunk-UMABOXBV.js";
+} from "./chunk-7ADYT32Q.js";
 import {
   printUiUrlLast
 } from "./chunk-4BVKM3FX.js";
@@ -108,7 +108,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-IWPW7CHP.js";
+} from "./chunk-NYFFGT3O.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -146,7 +146,7 @@ import {
   supportsMultiAgentV2,
   translateResponsesRequest,
   writeResponsesErrorStream
-} from "./chunk-YZCZRCSM.js";
+} from "./chunk-OKSVQXT5.js";
 import {
   OPENCODE_SESSION_HEADER,
   PoolHealthStore,
@@ -185,19 +185,19 @@ import {
   retryPoolFailure,
   routableModelsForTarget,
   toOAuthRegistryId
-} from "./chunk-ZLWY63DU.js";
+} from "./chunk-RPTGNMJP.js";
 import {
   effectiveProviderBaseUrl,
   isLikelyPlaceholderKey,
   resolveProviderTemplate,
   resolveRefreshCredential,
   syntheticTemplate
-} from "./chunk-JEZVWKSK.js";
+} from "./chunk-5IM432XT.js";
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-6A3PDD3F.js";
-import "./chunk-A7QRQQKE.js";
+} from "./chunk-EYIJ6J6Z.js";
+import "./chunk-7PYO2CQY.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -271,7 +271,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-S23YQBOY.js";
+} from "./chunk-HWZBCTO3.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -1919,9 +1919,11 @@ function buildFavoritesCodexCatalog(starting, resolved) {
 }
 function enrichFavoriteModel(r) {
   const model = r.model;
+  const wireId = (model.upstreamModelId || model.id).toLowerCase();
+  const fallbackNpm = model.modelFormat === "anthropic" ? "@ai-sdk/anthropic" : model.modelFormat === "cloud-code" && wireId.includes("gemini-") ? "@ai-sdk/google" : "@ai-sdk/openai-compatible";
   return {
     ...model,
-    npm: model.npm ?? (model.modelFormat === "anthropic" ? "@ai-sdk/anthropic" : "@ai-sdk/openai-compatible"),
+    npm: model.npm ?? fallbackNpm,
     upstreamModelId: model.upstreamModelId || model.id
   };
 }
@@ -3451,7 +3453,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-FT5V5ZWU.js");
+      const { testModel } = await import("./test-model-IPDLKBUP.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -7748,11 +7750,12 @@ Available: ${available}`, isStream);
             ...requestHeaders ? { requestHeaders } : {}
           })
         );
+        const requestedThinkingLevel = typeof body?.generationConfig?.thinkingConfig?.thinkingLevel === "string" ? body.generationConfig.thinkingConfig.thinkingLevel.trim().toLowerCase() : "high";
         params.providerOptions = deepMergeProviderOptions(
           params.providerOptions,
           deepMergeProviderOptions(
             thinkingProviderOptions(route.npm || "@ai-sdk/openai-compatible"),
-            effortProviderOptions(route.npm || "@ai-sdk/openai-compatible", "high", route.realModelId, route)
+            effortProviderOptions(route.npm || "@ai-sdk/openai-compatible", requestedThinkingLevel || "high", route.realModelId, route)
           )
         );
         plog(`Translated SDK params:
@@ -18085,7 +18088,7 @@ Options:
       return 0;
     }
     if (parsed.uiAction === "stop") {
-      const { stopUiServer } = await import("./ui-command-U4I7SIHR.js");
+      const { stopUiServer } = await import("./ui-command-GZWEMO4C.js");
       const result = await stopUiServer();
       if (result.stopped) {
         console.log(`
@@ -18098,11 +18101,11 @@ Options:
 `);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-U4I7SIHR.js");
+    const { runUiCommand } = await import("./ui-command-GZWEMO4C.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode, background: parsed.uiBackground });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-IGQHN4XN.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-KE5ABMVP.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;
