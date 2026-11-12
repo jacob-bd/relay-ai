@@ -15,6 +15,10 @@
 - [x] Update `src/codex/catalog.ts`, `src/codex/favorites-catalog.ts`, and `src/gemini-proxy.ts` so `cloud-code` Gemini catalogs and Gemini CLI preserve `xhigh`
 - [x] Add unit tests in `tests/reasoning-capabilities.test.ts`, `tests/provider-factory.test.ts`, `tests/antigravity-anthropic-to-cloudcode.test.ts`, `tests/core-antigravity-model.test.ts`, and `tests/codex-catalog.test.ts`
 
-## Release v0.22.6 Prep
-- [x] Fold PR #91 + usage fixes + Hydrogen `xhigh` into `CHANGELOG.md` for `0.22.6`
-- [ ] Run final `npm run typecheck`, `npm run build`, and `npm test`, then commit locally on `main` (stop before pushing to `origin/main`)
+## Release v0.22.6 Prep & Publish
+- [x] Fold PR #91 + usage fixes + Hydrogen `xhigh` + `% used` UI fix into `CHANGELOG.md`
+- [x] Commit locally on `main` (`release: v0.22.6`)
+- [x] Push `main` to `origin/main` (PR #91 marked merged)
+- [x] Tag `v0.22.6` and push tag to trigger GitHub Action
+- [x] Follow CI workflow run (`Publish to npm`) to green completion
+- [x] Verify published release on GitHub (`v0.22.6`) and npm registry (`@jacobbd/relay-ai@0.22.6`)
