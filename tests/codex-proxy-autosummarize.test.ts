@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MockLanguageModelV4 } from 'ai/test';
 import { simulateReadableStream } from 'ai';
 import type { LanguageModelV4StreamPart } from '@ai-sdk/provider';
@@ -207,4 +207,43 @@ describe('native → relay model switch (#94)', () => {
     await (await fetch(url, { method: 'POST', headers, body: JSON.stringify({ model: route.modelId, input: history(13, 1_200), stream: true }) })).text();
     expect(rec.summary.length).toBeGreaterThanOrEqual(1);
   });
+});
+
+describe('oversized images (Task 9)', () => {
+  let bigImage = '';
+  const imageInput = () => [env, { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'see this' }, { type: 'input_image', image_url: bigImage }] }];
+  beforeAll(async () => {
+    const sharp = (await import('sharp')).default;
+    bigImage = 'data:image/png;base64,' + (await sharp({ create: { width: 4000, height: 1000, channels: 3, background: '#000', noise: { type: 'gaussian', mean: 128, sigma: 60 } } }).png().toBuffer()).toString('base64');
+  }, 60_000);
+
+  it('shrinks an oversized attached image before sending to Claude', async () => {
+    const { model, rec } = fakeModel();
+    await start(model);
+    const events = await post(imageInput());
+    expect(events.filter(e => e.event === 'response.failed')).toHaveLength(0);
+    expect(textOf(rec.main[0]!).length).toBeLessThan(bigImage.length);
+  }, 60_000);
+
+  it('retries once with shrunk images when any provider rejects an image', async () => {
+    const rec: Prompt[] = [];
+    const model = new MockLanguageModelV4({
+      doStream: async (opts: { prompt: Prompt }) => {
+        rec.push(opts.prompt);
+        if (rec.length === 1) throw Object.assign(new Error('messages.1.content.1.image.source.base64: image exceeds 10 MB maximum: 11052444 bytes > 10485760 bytes'), { statusCode: 400 });
+        return { stream: textStream('ok') };
+      },
+    } as never);
+    vi.mocked(createLanguageModel).mockResolvedValue(model as never);
+    handle = await startCodexProxy([{ modelId: 'other__vision', npm: '@ai-sdk/openai-compatible', apiKey: 'x', upstreamModelId: 'vision', providerId: 'custom-openai-1', baseURL: 'http://127.0.0.1:1/v1' } as never], { requireAuth: false });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/v1/responses`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', session_id: 'img' },
+      body: JSON.stringify({ model: 'other__vision', input: imageInput(), stream: true }),
+    });
+    const events = parseSse(await res.text());
+    expect(rec).toHaveLength(2);
+    expect(events.filter(e => e.event === 'response.created')).toHaveLength(1);
+    expect(events.filter(e => e.event === 'response.completed')).toHaveLength(1);
+    expect(textOf(rec[1]!).length).toBeLessThan(textOf(rec[0]!).length);
+  }, 60_000);
 });

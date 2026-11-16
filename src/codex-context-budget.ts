@@ -124,3 +124,8 @@ export function __resetContextBudgetForTests(): void {
   calibration.clear();
   families.clear();
 }
+
+/** Recognises provider refusals for a single oversized image (bytes or pixels). */
+export function parseImageTooLarge(message: string): boolean {
+  return /image exceeds|image too large|image dimensions exceed|image size exceeds/i.test(message);
+}
