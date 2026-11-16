@@ -772,7 +772,7 @@ function translateResponsesToolChoice(
   return undefined;
 }
 
-function newResponseId(): string {
+export function newResponseId(): string {
   return `resp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
@@ -1018,6 +1018,18 @@ export interface WriteResponsesStreamOptions {
   toolContext?: CodexToolContext;
   /** Names the real route in terminal error lines; defaults to the requested model id. */
   logLabel?: string;
+  /** Caller-owned response id, so a retried attempt keeps the id Codex already saw. */
+  responseId?: string;
+  /** The caller already emitted response.created (see writeResponsesCreated). */
+  skipCreated?: boolean;
+}
+
+/** Emits response.created up front so Codex sees a first frame before any slow pre-work. */
+export function writeResponsesCreated(modelId: string, responseId: string, write: WriteFn): void {
+  write(sseChunk('response.created', {
+    type: 'response.created',
+    response: { id: responseId, object: 'response', model: modelId, created_at: Math.floor(Date.now() / 1000), status: 'in_progress', output: [] },
+  }));
 }
 
 export async function writeResponsesStream(
@@ -1029,12 +1041,12 @@ export async function writeResponsesStream(
   options?: WriteResponsesStreamOptions,
 ): Promise<void> {
   const emit = (type: string, data: unknown) => write(sseChunk(type, data));
-  const responseId = newResponseId();
+  const responseId = options?.responseId ?? newResponseId();
   const createdAt = Math.floor(Date.now() / 1000);
   let usage: ResponsesUsage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
   let relayUsage: RelayUsage | undefined;
 
-  emit('response.created', {
+  if (!options?.skipCreated) emit('response.created', {
     type: 'response.created',
     response: {
       id: responseId,
@@ -1529,6 +1541,8 @@ export interface StreamResponsesOptions {
   idleTimeoutMs?: number;
   progressTimeoutMs?: number;
   logLabel?: string;
+  responseId?: string;
+  skipCreated?: boolean;
 }
 
 export async function streamResponsesResponse(
@@ -1599,6 +1613,8 @@ export async function streamResponsesResponse(
         onForceStop: reason => abort.abort(new Error(reason)),
         toolContext,
         logLabel: options?.logLabel,
+        responseId: options?.responseId,
+        skipCreated: options?.skipCreated,
       });
     } finally {
       active = false;

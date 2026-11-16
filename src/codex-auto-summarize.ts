@@ -325,6 +325,11 @@ export async function applySummaryCheckpoint(args: ApplySummaryArgs): Promise<Ap
   return { input: assemble(pinned, cp, split.tail), hoistedTools: cp.hoistedTools, summarized: true, reused: false, summarizedItems: split.head.length };
 }
 
+/** True when this conversation already has a summary that later turns must keep using. */
+export function hasCheckpoint(key: string): boolean {
+  return checkpoints.has(key);
+}
+
 export function __resetAutoSummarizeForTests(): void {
   checkpoints.clear();
   inFlight.clear();

@@ -14,7 +14,18 @@ import {
   codexAppModelSlug,
 } from './codex/app-profile.js';
 import { createLanguageModel, maxToolsForNpm, withAnthropicThinkingDisplay, type VertexProviderConfig } from './provider-factory.js';
-import { estimateValueChars } from './codex-context-budget.js';
+import {
+  estimateValueChars,
+  estimateResponsesBodyChars,
+  charsPerToken,
+  conversationKey,
+  noteModelFamily,
+  recordUsageCalibration,
+  parseContextOverflow,
+} from './codex-context-budget.js';
+import { applySummaryCheckpoint, autoSummarizeMode, buildSummaryParams, hasCheckpoint } from './codex-auto-summarize.js';
+import { providerKind } from './registry/provider-kind.js';
+import { localTimestamp } from './trace-log.js';
 import { applyClaudeCodeOAuthIdentity } from './oauth/claude-code-identity.js';
 import {
   translateResponsesRequest,
@@ -23,12 +34,17 @@ import {
   writeResponsesErrorStream,
   formatRelayUsage,
   overflowError,
+  liftAdditionalToolsInput,
+  collectSummaryText,
+  writeResponsesCreated,
+  newResponseId,
   appendCompactionInstruction,
   streamCompactionResponse,
   generateCompactionResponse,
   type CodexSdkCallParams,
   type ResponsesInputItem,
   type ResponsesStreamSummary,
+  type ResponsesTool,
 } from './codex-responses-adapter.js';
 import { silenceSdkWarnings } from './sdk-adapter.js';
 import { formatUpstreamError, upstreamHttpStatus } from './codex/upstream-error.js';
@@ -505,6 +521,148 @@ export interface CodexProxyOptions {
   };
 }
 
+// ── Relay context budget & auto-summarize (#94, #95) ─────────────────────────
+const BUDGET_RATIO = 0.85;
+const SWITCH_TRIGGER_RATIO = 0.5;
+const OVERFLOW_TARGET_RATIO = 0.6;
+const SWITCH_TARGET_RATIO = 0.35;
+const SUMMARY_CHUNK_RATIO = 0.6;
+const SUMMARY_RESERVE_TOKENS = 4_000;
+
+function routeFamily(route: CodexProxyRoute): string {
+  return providerKind(route.providerId?.trim().toLowerCase() ?? '') || route.npm;
+}
+
+function toolKey(tool: unknown): string {
+  const t = tool as { type?: string; name?: string };
+  return `${t.type ?? ''}:${t.name ?? JSON.stringify(tool)}`;
+}
+
+function mergeTools(existing: unknown, extra: ResponsesTool[]): unknown {
+  if (extra.length === 0) return existing;
+  const base = Array.isArray(existing) ? existing as unknown[] : [];
+  const seen = new Set(base.map(toolKey));
+  return [...base, ...extra.filter(t => !seen.has(toolKey(t)))];
+}
+
+export interface RelayBodyContext {
+  route: CodexProxyRoute;
+  languageModel: LanguageModel;
+  key: string;
+  label: string;
+  log: (line: string) => void;
+  signal?: AbortSignal;
+  /** Retry after a provider overflow: summarize even if the estimate says it fits. */
+  force?: boolean;
+}
+
+/**
+ * Prepares a relay request body: lifts turn-scoped tools, records the serving
+ * model family, and auto-summarizes when the body overflows the window, the
+ * conversation just switched model family with a large history, or an earlier
+ * summary must keep being reused. Summarizer failures fall back to the original body.
+ */
+export async function prepareRelayBody(
+  body: Record<string, unknown>,
+  ctx: RelayBodyContext,
+): Promise<{ body: Record<string, unknown>; sentChars: number }> {
+  const lifted = liftAdditionalToolsInput(responsesInputItems(body.input), (Array.isArray(body.tools) ? body.tools : []) as ResponsesTool[]);
+  let next: Record<string, unknown> = lifted.input === body.input && !Array.isArray(body.tools)
+    ? { ...body }
+    : { ...body, input: lifted.input, ...(lifted.tools.length || Array.isArray(body.tools) ? { tools: lifted.tools } : {}) };
+  const family = routeFamily(ctx.route);
+  const { previous } = noteModelFamily(ctx.key, family);
+  const window = ctx.route.contextWindow ?? 0;
+  const mode = autoSummarizeMode();
+  const compaction = isLikelyCodexCompactionRequest(body) || isCodexV2CompactionRequest(body);
+  const total = estimateResponsesBodyChars(next);
+  if (window <= 0 || mode === 'off' || compaction) return { body: next, sentChars: total };
+
+  let ratio = charsPerToken(ctx.key);
+  if (ctx.force) ratio = Math.max(1, ratio * 0.6);
+  const tokens = total / ratio;
+  const overflow = Boolean(ctx.force) || tokens > BUDGET_RATIO * window;
+  const switched = mode === 'all' && previous !== undefined && previous !== family && tokens > SWITCH_TRIGGER_RATIO * window;
+  if (!overflow && !switched && !hasCheckpoint(ctx.key)) return { body: next, sentChars: total };
+
+  const reason = overflow || !switched ? 'overflow' : 'switch';
+  const input = next.input as ResponsesInputItem[];
+  const overhead = total - input.reduce((n, item) => n + estimateValueChars(item), 0);
+  const targetRatio = reason === 'switch' ? SWITCH_TARGET_RATIO : OVERFLOW_TARGET_RATIO;
+  try {
+    const result = await applySummaryCheckpoint({
+      input,
+      key: ctx.key,
+      budgetChars: Math.floor(BUDGET_RATIO * window * ratio) - overhead,
+      targetChars: Math.floor(targetRatio * window * ratio) - overhead,
+      chunkChars: Math.floor(SUMMARY_CHUNK_RATIO * window * ratio),
+      summaryReserveChars: Math.floor(SUMMARY_RESERVE_TOKENS * ratio),
+      reason,
+      summarize: (transcript, previousSummary) => collectSummaryText(ctx.languageModel, buildSummaryParams(transcript, previousSummary), ctx.signal),
+    });
+    next = { ...next, input: result.input, tools: mergeTools(next.tools, result.hoistedTools) };
+    if (next.tools === undefined) delete next.tools;
+    const after = estimateResponsesBodyChars(next);
+    if (result.summarized) {
+      process.stderr.write(`[relay-ai] ${localTimestamp()} ${ctx.label}: summarized ${result.summarizedItems} earlier items (~${Math.round(total / ratio / 1000)}K → ~${Math.round(after / ratio / 1000)}K tokens, reason=${reason})\n`);
+    }
+    ctx.log(`auto-summarize: model=${ctx.route.modelId} reason=${reason} summarized=${result.summarized} reused=${result.reused} chars=${total}->${after} ratio=${ratio.toFixed(2)}`);
+    return { body: next, sentChars: after };
+  } catch (err) {
+    const msg = formatUpstreamError(err);
+    process.stderr.write(`[relay-ai] ${localTimestamp()} ${ctx.label}: auto-summarize failed: ${msg}\n`);
+    ctx.log(`auto-summarize failed: model=${ctx.route.modelId}: ${msg}`);
+    return { body: next, sentChars: total };
+  }
+}
+
+/** Stable per-conversation key for requests without a conversation id: the first user turn.
+ *  Not per route, so model-family switches and the summary checkpoint follow the chat. */
+function httpBudgetFallbackKey(body: Record<string, unknown>): string {
+  const first = responsesInputItems(body.input).find(item => 'role' in item && item.role === 'user');
+  return 'fb:' + createHash('sha256').update(JSON.stringify(first ?? null)).digest('hex').slice(0, 32);
+}
+
+/** Native passthrough turns still count for model-family switch detection (#94). */
+function noteNativeTurn(headers: CodexRequestHeaders, body: Record<string, unknown>): void {
+  noteModelFamily(conversationKey(extractConversationId(headers, body), httpBudgetFallbackKey(body)), 'openai-native');
+}
+
+/** Overflow seen in a failed attempt: calibrate from the provider's own token count. */
+export function noteProviderOverflow(key: string, sentChars: number, message: string): void {
+  const overflow = parseContextOverflow(message);
+  if (overflow?.actualTokens) recordUsageCalibration(key, sentChars, overflow.actualTokens);
+}
+
+/**
+ * Holds back the first `response.failed` of an attempt when it is a context
+ * overflow, so the caller can summarize and retry under the same response id.
+ */
+export function createOverflowGate(write: (chunk: string) => void, armed: boolean) {
+  let decided = !armed;
+  let held: string | undefined;
+  return {
+    write(chunk: string) {
+      if (decided) { write(chunk); return; }
+      if (chunk.startsWith('event: response.failed')) {
+        const data = chunk.split('\n').find(line => line.startsWith('data: '));
+        try {
+          const parsed = JSON.parse(data?.slice(6) ?? '{}') as { response?: { error?: { code?: string; message?: string } } };
+          if (parsed.response?.error?.code === 'context_length_exceeded') {
+            held = parsed.response.error.message ?? '';
+            decided = true;
+            return;
+          }
+        } catch { /* fall through */ }
+      }
+      decided = true;
+      write(chunk);
+    },
+    /** The held overflow message, if this attempt ended in one. */
+    overflowMessage(): string | undefined { return held; },
+  };
+}
+
 async function prepareExternalCodexBody(
   body: Record<string, unknown>,
   context: {
@@ -815,6 +973,7 @@ export async function startCodexProxy(
             return;
           }
           if (dispatch.kind === 'native') {
+            noteNativeTurn(req.headers, body);
             audit({
               transport: 'http', requestedModel: modelId, dispatch: 'native', phase: 'dispatch',
               provider: 'openai-native', routeModel: modelId, upstreamModel: modelId,
@@ -890,52 +1049,63 @@ export async function startCodexProxy(
             mixedNative,
             headers: req.headers,
           });
+          const conversationId = extractConversationId(req.headers, routedBody);
           const requestHeaders = openCodeGoHeaders(
             route.providerId,
             route.baseURL,
-            extractConversationId(req.headers, routedBody),
+            conversationId,
             route.headers,
           );
-          let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
-            routedBody as unknown as import('./codex-responses-adapter.js').ResponsesRequest,
-            route.npm,
-            {
-              providerId: route.providerId,
-              apiBaseUrl: route.baseURL,
-              supportedParameters: route.supportedParameters,
-              reasoning: route.reasoning,
-              interleavedReasoningField: route.interleavedReasoningField,
-              reasoningEffortLevels: route.reasoningEffortLevels,
-              reasoningEffortConflict: route.reasoningEffortConflict,
-              upstreamModelId: route.upstreamModelId,
-            },
-            {
-              maxTools: maxToolsForNpm(route.npm),
-              ...(requestHeaders ? { requestHeaders } : {}),
-            },
-          ), route));
-          params = { ...params, providerOptions: withAnthropicThinkingDisplay(params.providerOptions as Record<string, Record<string, unknown>> | undefined, route) as typeof params.providerOptions };
-          if (route.contextWindow && route.contextWindow > 0) {
-            const before = params.messages.length;
-            const estimatedChars = estimateCodexRequestChars(params);
-            const compaction = isLikelyCodexCompactionRequest(body);
-            if (debug) log(`context check: model=${route.modelId} window=${route.contextWindow} chars=${estimatedChars} compaction=${compaction ? 'yes' : 'no'} messages=${before}`);
-            params = protectCodexCompactionParams(body, params, route.contextWindow);
-            if (debug && params.messages.length < before) {
-              log(`context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages`);
-            }
-          }
+          const budgetKey = conversationKey(conversationId, httpBudgetFallbackKey(routedBody));
+          const label = routeLogLabel(modelId, route, relayDispatch);
+          const abort = new AbortController();
+          res.once('close', () => { if (!res.writableEnded) abort.abort(new Error('client disconnected')); });
           // remote compaction v2: the trigger carries no prompt, so ask the model for a
           // summary and return it as the single `compaction` item Codex requires.
           const v2Compaction = isCodexV2CompactionRequest(body);
-          if (v2Compaction) {
-            params = appendCompactionInstruction(params);
-            if (debug) log(`compaction v2: synthesizing single compaction item for model=${route.modelId}`);
-          }
-          if (debug) {
-            const effort = (body as { reasoning?: { effort?: string } }).reasoning?.effort;
-            log(`model=${route.modelId} effort=${effort ?? '(none)'} maxOutputTokens=${String(params.maxOutputTokens ?? '(omitted)')} providerOptions=${JSON.stringify(params.providerOptions)}`);
-          }
+          const buildParams = (prepared: Record<string, unknown>): CodexSdkCallParams => {
+            let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
+              prepared as unknown as import('./codex-responses-adapter.js').ResponsesRequest,
+              route.npm,
+              {
+                providerId: route.providerId,
+                apiBaseUrl: route.baseURL,
+                supportedParameters: route.supportedParameters,
+                reasoning: route.reasoning,
+                interleavedReasoningField: route.interleavedReasoningField,
+                reasoningEffortLevels: route.reasoningEffortLevels,
+                reasoningEffortConflict: route.reasoningEffortConflict,
+                upstreamModelId: route.upstreamModelId,
+              },
+              {
+                maxTools: maxToolsForNpm(route.npm),
+                ...(requestHeaders ? { requestHeaders } : {}),
+              },
+            ), route));
+            params = { ...params, providerOptions: withAnthropicThinkingDisplay(params.providerOptions as Record<string, Record<string, unknown>> | undefined, route) as typeof params.providerOptions };
+            if (route.contextWindow && route.contextWindow > 0) {
+              const before = params.messages.length;
+              const estimatedChars = estimateCodexRequestChars(params);
+              const compaction = isLikelyCodexCompactionRequest(body);
+              if (debug) log(`context check: model=${route.modelId} window=${route.contextWindow} chars=${estimatedChars} compaction=${compaction ? 'yes' : 'no'} messages=${before}`);
+              params = protectCodexCompactionParams(body, params, route.contextWindow, charsPerToken(budgetKey));
+              if (debug && params.messages.length < before) {
+                log(`context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages`);
+              }
+            }
+            if (v2Compaction) {
+              params = appendCompactionInstruction(params);
+              if (debug) log(`compaction v2: synthesizing single compaction item for model=${route.modelId}`);
+            }
+            if (debug) {
+              const effort = (body as { reasoning?: { effort?: string } }).reasoning?.effort;
+              log(`model=${route.modelId} effort=${effort ?? '(none)'} maxOutputTokens=${String(params.maxOutputTokens ?? '(omitted)')} providerOptions=${JSON.stringify(params.providerOptions)}`);
+            }
+            return params;
+          };
+          const prepare = (attempt: number) => prepareRelayBody(routedBody, {
+            route, languageModel, key: budgetKey, label, log, signal: abort.signal, force: attempt > 0,
+          });
 
           if (body.stream) {
             res.writeHead(200, {
@@ -943,7 +1113,7 @@ export async function startCodexProxy(
               'Cache-Control': 'no-cache',
               Connection: 'keep-alive',
             });
-            const write = (chunk: string) => {
+            const rawWrite = (chunk: string) => {
               res.write(chunk);
               if (debug) {
                 const completed = captureCompletedResponse(chunk);
@@ -958,80 +1128,109 @@ export async function startCodexProxy(
                 }
               }
             };
-            let streamFailure: ResponsesStreamSummary | undefined;
-            try {
-              if (v2Compaction) {
-                await streamCompactionResponse(languageModel, params, modelId, write);
-              } else
-              await streamResponsesResponse(languageModel, params, modelId, write, summary => {
-                if (summary.errorMessage || summary.aborted || summary.incompleteReason) streamFailure = summary;
-                if (debug) {
-                  const failure = `${summary.aborted ? ' aborted=yes' : ''}${summary.incompleteReason ? ` incomplete=${summary.incompleteReason}` : ''}${summary.finishReason ? ` finish=${summary.finishReason}` : ''}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ''}`;
-                  log(`response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(',')}] loopDetected=${summary.loopDetected ?? 'no'} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}${formatRelayUsage(summary.usage)}`);
-                }
-              }, progress => {
-                if (debug) {
-                  log(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)} parts=[${progress.recentPartTypes ?? ''}]`);
-                }
-              }, { logLabel: routeLogLabel(modelId, route, relayDispatch) });
+            // Emit response.created before any summarizing so Codex sees a first
+            // frame right away; a retried attempt reuses the same id.
+            const responseId = newResponseId();
+            if (!v2Compaction) writeResponsesCreated(modelId, responseId, rawWrite);
+            for (let attempt = 0; attempt < 2; attempt++) {
+              const prepared = await prepare(attempt);
+              const params = buildParams(prepared.body);
+              const gate = createOverflowGate(rawWrite, attempt === 0 && !v2Compaction);
+              const write = gate.write;
+              let streamFailure: ResponsesStreamSummary | undefined;
+              let usage: ResponsesStreamSummary['usage'];
+              let thrown: { status: number | string } | undefined;
+              try {
+                if (v2Compaction) {
+                  await streamCompactionResponse(languageModel, params, modelId, write);
+                } else
+                await streamResponsesResponse(languageModel, params, modelId, write, summary => {
+                  if (summary.errorMessage || summary.aborted || summary.incompleteReason) streamFailure = summary;
+                  usage = summary.usage;
+                  if (debug) {
+                    const failure = `${summary.aborted ? ' aborted=yes' : ''}${summary.incompleteReason ? ` incomplete=${summary.incompleteReason}` : ''}${summary.finishReason ? ` finish=${summary.finishReason}` : ''}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ''}`;
+                    log(`response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(',')}] loopDetected=${summary.loopDetected ?? 'no'} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}${formatRelayUsage(summary.usage)}`);
+                  }
+                }, progress => {
+                  if (debug) {
+                    log(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)} parts=[${progress.recentPartTypes ?? ''}]`);
+                  }
+                }, { logLabel: label, responseId, skipCreated: true });
+              } catch (err) {
+                const msg = formatUpstreamError(err);
+                const status = upstreamHttpStatus(err, msg);
+                thrown = { status };
+                if (debug) log(`sdk error: ${route.modelId}: ${msg}`);
+                writeResponsesErrorStream(modelId, msg, write, typeof status === 'number' ? status : 500);
+              }
+              const held = gate.overflowMessage();
+              if (held !== undefined) {
+                noteProviderOverflow(budgetKey, prepared.sentChars, held);
+                if (debug) log(`context overflow from provider; summarizing and retrying once: model=${route.modelId}`);
+                continue;
+              }
+              if (usage) recordUsageCalibration(budgetKey, prepared.sentChars, usage.inputTokens);
               audit({
                 transport: 'http', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
                 provider: route.providerId ?? 'relay', routeModel: route.modelId,
                 upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
-                ...streamOutcome(streamFailure, 200),
+                ...(thrown ? { outcome: 'error' as const, status: thrown.status } : streamOutcome(streamFailure, 200)),
               });
-            } catch (err) {
-              const msg = formatUpstreamError(err);
-              const status = upstreamHttpStatus(err, msg);
-              audit({
-                transport: 'http', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
-                provider: route.providerId ?? 'relay', routeModel: route.modelId,
-                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId, outcome: 'error', status,
-              });
-              if (debug) log(`sdk error: ${route.modelId}: ${msg}`);
-              writeResponsesErrorStream(modelId, msg, write, status);
+              break;
             }
             res.end();
           } else {
-            try {
-              const response = v2Compaction
-                ? await generateCompactionResponse(languageModel, params, modelId)
-                : await generateResponsesResponse(languageModel, params, modelId, usage => {
-                  if (debug) log(`response done (non-stream): model=${route.modelId}${formatRelayUsage(usage)}`);
+            for (let attempt = 0; attempt < 2; attempt++) {
+              const prepared = await prepare(attempt);
+              const params = buildParams(prepared.body);
+              try {
+                const response = v2Compaction
+                  ? await generateCompactionResponse(languageModel, params, modelId)
+                  : await generateResponsesResponse(languageModel, params, modelId, usage => {
+                    recordUsageCalibration(budgetKey, prepared.sentChars, usage.inputTokens);
+                    if (debug) log(`response done (non-stream): model=${route.modelId}${formatRelayUsage(usage)}`);
+                  });
+                if (debug) {
+                  appendCodexBodyDump({
+                    ts: localIsoTimestamp(),
+                    transport: 'http',
+                    direction: 'response',
+                    model: route.modelId,
+                    response,
+                  });
+                }
+                sendJson(res, 200, response);
+                audit({
+                  transport: 'http', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
+                  provider: route.providerId ?? 'relay', routeModel: route.modelId,
+                  upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+                  outcome: response.status === 'incomplete' ? 'error' : 'ok',
+                  status: response.status === 'incomplete' ? 'response.incomplete' : 200,
                 });
-              if (debug) {
-                appendCodexBodyDump({
-                  ts: localIsoTimestamp(),
-                  transport: 'http',
-                  direction: 'response',
-                  model: route.modelId,
-                  response,
+                break;
+              } catch (err) {
+                const msg = formatUpstreamError(err);
+                if (attempt === 0 && !v2Compaction && overflowError(msg)) {
+                  noteProviderOverflow(budgetKey, prepared.sentChars, msg);
+                  if (debug) log(`context overflow from provider; summarizing and retrying once: model=${route.modelId}`);
+                  continue;
+                }
+                const status = upstreamHttpStatus(err, msg);
+                audit({
+                  transport: 'http', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
+                  provider: route.providerId ?? 'relay', routeModel: route.modelId,
+                  upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId, outcome: 'error', status,
                 });
+                if (debug) log(`sdk error: ${route.modelId}: ${msg}`);
+                sendJson(res, status, {
+                  error: overflowError(msg) ?? {
+                    message: msg,
+                    type: status === 429 ? 'rate_limit_error' : 'api_error',
+                    code: String(status),
+                  },
+                });
+                break;
               }
-              sendJson(res, 200, response);
-              audit({
-                transport: 'http', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
-                provider: route.providerId ?? 'relay', routeModel: route.modelId,
-                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
-                outcome: response.status === 'incomplete' ? 'error' : 'ok',
-                status: response.status === 'incomplete' ? 'response.incomplete' : 200,
-              });
-            } catch (err) {
-              const msg = formatUpstreamError(err);
-              const status = upstreamHttpStatus(err, msg);
-              audit({
-                transport: 'http', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
-                provider: route.providerId ?? 'relay', routeModel: route.modelId,
-                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId, outcome: 'error', status,
-              });
-              if (debug) log(`sdk error: ${route.modelId}: ${msg}`);
-              sendJson(res, status, {
-                error: overflowError(msg) ?? {
-                  message: msg,
-                  type: status === 429 ? 'rate_limit_error' : 'api_error',
-                  code: String(status),
-                },
-              });
             }
           }
         } catch (err) {
@@ -1188,6 +1387,7 @@ export async function startCodexProxy(
       let nativeSendTurn: ((body: Record<string, unknown>, modelId: string) => void) | undefined;
       let socketClosing = false;
       const externalResponseStates = new Map<string, ExternalResponseState>();
+      const socketAbort = new AbortController();
       let currentExternalCompletedResponse: Record<string, unknown> | undefined;
       let currentExternalStateInput: ResponsesInputItem[] | undefined;
       let currentExternalConsumedResponseId: string | undefined;
@@ -1415,6 +1615,7 @@ export async function startCodexProxy(
               return;
             }
             if (dispatch.kind === 'native') {
+              noteNativeTurn(req.headers, body);
               audit({
                 transport: 'ws', requestedModel: modelId, dispatch: 'native', phase: 'dispatch',
                 provider: 'openai-native', routeModel: modelId, upstreamModel: modelId,
@@ -1601,79 +1802,112 @@ export async function startCodexProxy(
               mixedNative,
               headers: req.headers,
             });
+            const conversationId = extractConversationId(req.headers, routedBody);
             const requestHeaders = openCodeGoHeaders(
               route.providerId,
               route.baseURL,
-              extractConversationId(req.headers, routedBody),
+              conversationId,
               route.headers,
             );
+            // State keeps the full original input; the saved summary checkpoint is
+            // reapplied on every turn (same path as HTTP), so deltas stay cheap.
             currentExternalStateInput = responsesInputItems(routedBody.input);
             currentExternalConsumedResponseId = continuation.consumedResponseId;
-            let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
-              routedBody as unknown as import('./codex-responses-adapter.js').ResponsesRequest,
-              route.npm,
-              {
-                providerId: route.providerId,
-                apiBaseUrl: route.baseURL,
-                supportedParameters: route.supportedParameters,
-                reasoning: route.reasoning,
-                interleavedReasoningField: route.interleavedReasoningField,
-                reasoningEffortLevels: route.reasoningEffortLevels,
-                reasoningEffortConflict: route.reasoningEffortConflict,
-                upstreamModelId: route.upstreamModelId,
-              },
-              {
-                maxTools: maxToolsForNpm(route.npm),
-                ...(requestHeaders ? { requestHeaders } : {}),
-              },
-            ), route));
-            params = { ...params, providerOptions: withAnthropicThinkingDisplay(params.providerOptions as Record<string, Record<string, unknown>> | undefined, route) as typeof params.providerOptions };
-            if (route.contextWindow && route.contextWindow > 0) {
-              const before = params.messages.length;
-              const estimatedChars = estimateCodexRequestChars(params);
-              const compaction = isLikelyCodexCompactionRequest(body);
-              if (debug) log(`WS context check: model=${route.modelId} window=${route.contextWindow} chars=${estimatedChars} compaction=${compaction ? 'yes' : 'no'} messages=${before} tools=${params.tools ? Object.keys(params.tools).length : 0}`);
-              params = protectCodexCompactionParams(body, params, route.contextWindow);
-              if (debug && params.messages.length < before) {
-                log(`WS context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages tools=${params.tools ? Object.keys(params.tools).length : 0}`);
-              }
-            }
+            const budgetKey = conversationKey(conversationId, httpBudgetFallbackKey(routedBody));
+            const label = routeLogLabel(modelId, route, relayDispatch);
             const v2Compaction = isCodexV2CompactionRequest(body);
-            if (v2Compaction) {
-              params = appendCompactionInstruction(params);
-              if (debug) log(`WS compaction v2: synthesizing single compaction item for model=${route.modelId}`);
-            }
-            if (debug) {
-              const effort = (body as { reasoning?: { effort?: string } }).reasoning?.effort;
-              log(`WS model=${route.modelId} effort=${effort ?? '(none)'} maxOutputTokens=${String(params.maxOutputTokens ?? '(omitted)')} providerOptions=${JSON.stringify(params.providerOptions)}`);
-            }
-            if (v2Compaction) {
-              await streamCompactionResponse(languageModel, params, modelId, sendWsEvent);
-            } else
-            await streamResponsesResponse(languageModel, params, modelId, sendWsEvent, summary => {
-              if (summary.errorMessage || summary.aborted || summary.incompleteReason) streamFailure = summary;
+            const responseId = newResponseId();
+            if (!v2Compaction) writeResponsesCreated(modelId, responseId, sendWsEvent);
+            for (let attempt = 0; attempt < 2; attempt++) {
+              const prepared = await prepareRelayBody(routedBody, {
+                route, languageModel, key: budgetKey, label, log, signal: socketAbort.signal, force: attempt > 0,
+              });
+              let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
+                prepared.body as unknown as import('./codex-responses-adapter.js').ResponsesRequest,
+                route.npm,
+                {
+                  providerId: route.providerId,
+                  apiBaseUrl: route.baseURL,
+                  supportedParameters: route.supportedParameters,
+                  reasoning: route.reasoning,
+                  interleavedReasoningField: route.interleavedReasoningField,
+                  reasoningEffortLevels: route.reasoningEffortLevels,
+                  reasoningEffortConflict: route.reasoningEffortConflict,
+                  upstreamModelId: route.upstreamModelId,
+                },
+                {
+                  maxTools: maxToolsForNpm(route.npm),
+                  ...(requestHeaders ? { requestHeaders } : {}),
+                },
+              ), route));
+              params = { ...params, providerOptions: withAnthropicThinkingDisplay(params.providerOptions as Record<string, Record<string, unknown>> | undefined, route) as typeof params.providerOptions };
+              if (route.contextWindow && route.contextWindow > 0) {
+                const before = params.messages.length;
+                const estimatedChars = estimateCodexRequestChars(params);
+                const compaction = isLikelyCodexCompactionRequest(body);
+                if (debug) log(`WS context check: model=${route.modelId} window=${route.contextWindow} chars=${estimatedChars} compaction=${compaction ? 'yes' : 'no'} messages=${before} tools=${params.tools ? Object.keys(params.tools).length : 0}`);
+                params = protectCodexCompactionParams(body, params, route.contextWindow, charsPerToken(budgetKey));
+                if (debug && params.messages.length < before) {
+                  log(`WS context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages tools=${params.tools ? Object.keys(params.tools).length : 0}`);
+                }
+              }
+              if (v2Compaction) {
+                params = appendCompactionInstruction(params);
+                if (debug) log(`WS compaction v2: synthesizing single compaction item for model=${route.modelId}`);
+              }
               if (debug) {
-                const failure = `${summary.aborted ? ' aborted=yes' : ''}${summary.incompleteReason ? ` incomplete=${summary.incompleteReason}` : ''}${summary.finishReason ? ` finish=${summary.finishReason}` : ''}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ''}`;
-                log(`WS response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(',')}] loopDetected=${summary.loopDetected ?? 'no'} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}${formatRelayUsage(summary.usage)}`);
+                const effort = (body as { reasoning?: { effort?: string } }).reasoning?.effort;
+                log(`WS model=${route.modelId} effort=${effort ?? '(none)'} maxOutputTokens=${String(params.maxOutputTokens ?? '(omitted)')} providerOptions=${JSON.stringify(params.providerOptions)}`);
               }
-            }, progress => {
-              if (debug) {
-                log(`WS response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
+              const gate = createOverflowGate(sendWsEvent, attempt === 0 && !v2Compaction);
+              let usage: ResponsesStreamSummary['usage'];
+              let thrown: { status: number | string } | undefined;
+              streamFailure = undefined;
+              try {
+                if (v2Compaction) {
+                  await streamCompactionResponse(languageModel, params, modelId, gate.write);
+                } else
+                await streamResponsesResponse(languageModel, params, modelId, gate.write, summary => {
+                  if (summary.errorMessage || summary.aborted || summary.incompleteReason) streamFailure = summary;
+                  usage = summary.usage;
+                  if (debug) {
+                    const failure = `${summary.aborted ? ' aborted=yes' : ''}${summary.incompleteReason ? ` incomplete=${summary.incompleteReason}` : ''}${summary.finishReason ? ` finish=${summary.finishReason}` : ''}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ''}`;
+                    log(`WS response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(',')}] loopDetected=${summary.loopDetected ?? 'no'} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}${formatRelayUsage(summary.usage)}`);
+                  }
+                }, progress => {
+                  if (debug) {
+                    log(`WS response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
+                  }
+                }, { logLabel: label, responseId, skipCreated: true });
+              } catch (err) {
+                const msg = formatUpstreamError(err);
+                const status = upstreamHttpStatus(err, msg);
+                thrown = { status };
+                if (debug) log(`WS sdk error: ${route.modelId}: ${msg}`);
+                writeResponsesErrorStream(modelId, msg, gate.write, typeof status === 'number' ? status : 500);
               }
-            }, { logLabel: routeLogLabel(modelId, route, relayDispatch) });
-            if (currentExternalCompletedResponse && currentExternalStateInput) {
-              if (currentExternalConsumedResponseId) {
-                externalResponseStates.delete(currentExternalConsumedResponseId);
+              const held = gate.overflowMessage();
+              if (held !== undefined) {
+                noteProviderOverflow(budgetKey, prepared.sentChars, held);
+                if (debug) log(`WS context overflow from provider; summarizing and retrying once: model=${route.modelId}`);
+                continue;
               }
-              // The compaction output replaces the prior transcript for later deltas.
-              rememberExternalResponse(currentExternalCompletedResponse, v2Compaction ? [] : currentExternalStateInput);
+              if (usage) recordUsageCalibration(budgetKey, prepared.sentChars, usage.inputTokens);
+              if (currentExternalCompletedResponse && currentExternalStateInput) {
+                if (currentExternalConsumedResponseId) {
+                  externalResponseStates.delete(currentExternalConsumedResponseId);
+                }
+                // The compaction output replaces the prior transcript for later deltas.
+                rememberExternalResponse(currentExternalCompletedResponse, v2Compaction ? [] : currentExternalStateInput);
+              }
+              audit({
+                transport: 'ws', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
+                provider: route.providerId ?? 'relay', routeModel: route.modelId,
+                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+                ...(thrown ? { outcome: 'error' as const, status: thrown.status } : streamOutcome(streamFailure, 'response.completed')),
+              });
+              break;
             }
-            audit({
-              transport: 'ws', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
-              provider: route.providerId ?? 'relay', routeModel: route.modelId,
-              upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
-              ...streamOutcome(streamFailure, 'response.completed'),
-            });
           } catch (err) {
             const msg = formatUpstreamError(err);
             const status = upstreamHttpStatus(err, msg);
@@ -1691,7 +1925,7 @@ export async function startCodexProxy(
       };
 
       socket.on('error', () => socket.destroy());
-      socket.once('close', () => externalResponseStates.clear());
+      socket.once('close', () => { externalResponseStates.clear(); socketAbort.abort(new Error('client disconnected')); });
       socket.on('data', onData);
       onData(head);
     });

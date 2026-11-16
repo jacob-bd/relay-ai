@@ -1490,3 +1490,22 @@ describe('collectSummaryText (#94/#95)', () => {
     await expect(collectSummaryText(model([{ type: 'stream-start', warnings: [] }, done]), params, ac.signal)).rejects.toThrow();
   });
 });
+
+describe('caller-owned response.created (#95 retry)', () => {
+  it('uses the given response id and skips response.created', async () => {
+    const { writeResponsesStream, writeResponsesCreated } = await import('../src/codex-responses-adapter.js');
+    const chunks: string[] = [];
+    writeResponsesCreated('m', 'resp_fixed', c => chunks.push(c));
+    async function* stream() {
+      yield { type: 'text-start', id: 't' };
+      yield { type: 'text-delta', id: 't', text: 'x' };
+      yield { type: 'text-end', id: 't' };
+      yield { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 1, outputTokens: 1 } };
+    }
+    await writeResponsesStream(stream() as never, 'm', c => chunks.push(c), undefined, undefined, { responseId: 'resp_fixed', skipCreated: true });
+    const events = parseSseEvents(chunks.join(''));
+    expect(events.filter(e => e.event === 'response.created')).toHaveLength(1);
+    expect(events.find(e => e.event === 'response.created')!.data.response.id).toBe('resp_fixed');
+    expect(events.find(e => e.event === 'response.completed')!.data.response.id).toBe('resp_fixed');
+  });
+});
