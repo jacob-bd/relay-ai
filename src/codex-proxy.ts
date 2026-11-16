@@ -358,7 +358,7 @@ export interface CodexProxyHandle {
 }
 
 const PROXY_PLACEHOLDER_KEY = 'proxy-local';
-export const MAX_CODEX_REQUEST_BYTES = 4 * 1024 * 1024;
+export const MAX_CODEX_REQUEST_BYTES = 32 * 1024 * 1024;
 
 function codexRouteLookupIds(requestedModel: string): string[] {
   const ids = routeLookupIds(requestedModel);
@@ -1180,6 +1180,7 @@ export async function startCodexProxy(
 
       let frameBuf = Buffer.alloc(0);
       let fragmentedText: Buffer[] | undefined;
+      let fragmentedBytes = 0;
       let externalActive = false;
       let poolActive = false;
       let nativeActive = false;
@@ -1293,11 +1294,19 @@ export async function startCodexProxy(
             }
             if (!frame.fin) {
               fragmentedText = [frame.payload];
+              fragmentedBytes = frame.payload.length;
               continue;
             }
           } else if (frame.opcode === 0x0) {
             if (!fragmentedText) {
               socket.write(wsCloseFrame(1002));
+              socket.end();
+              return;
+            }
+            fragmentedBytes += frame.payload.length;
+            if (fragmentedBytes > MAX_CODEX_REQUEST_BYTES) {
+              fragmentedText = undefined;
+              socket.write(wsCloseFrame(1009));
               socket.end();
               return;
             }
@@ -1313,6 +1322,7 @@ export async function startCodexProxy(
             ? Buffer.concat(fragmentedText ?? []).toString('utf8')
             : frame.payload.toString('utf8');
           fragmentedText = undefined;
+          fragmentedBytes = 0;
           if (externalActive || poolActive) {
             // Neither the external SDK stream nor the pool can safely multiplex
             // turns. Closing with policy violation makes the client fail closed

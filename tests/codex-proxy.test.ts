@@ -1664,3 +1664,42 @@ describe('estimateCodexRequestChars counts tools and discounts nested images (#9
     expect(out.tools).toBeUndefined();
   });
 });
+
+describe('Codex WS request size cap', () => {
+  let h: Awaited<ReturnType<typeof startCodexProxy>> | null = null;
+  afterEach(() => { h?.close(); h = null; });
+
+  function firstSignal(client: WebSocket): Promise<{ kind: 'message' | 'close'; code?: number }> {
+    return new Promise(resolve => {
+      client.once('message', () => resolve({ kind: 'message' }));
+      client.once('close', code => resolve({ kind: 'close', code }));
+    });
+  }
+
+  it('accepts a 6 MB history frame', async () => {
+    h = await startCodexProxy([{ modelId: 'm', npm: '@ai-sdk/anthropic', apiKey: 'sk-test', upstreamModelId: 'claude-sonnet-4-6' }], { requireAuth: false });
+    const client = new WebSocket(`ws://127.0.0.1:${h.port}/v1/responses`);
+    await new Promise(r => client.once('open', r));
+    const signal = firstSignal(client);
+    client.send(JSON.stringify({ type: 'response.create', model: 'm', input: [{ role: 'user', content: [{ type: 'input_text', text: 'x'.repeat(6 * 1024 * 1024) }] }] }));
+    const got = await signal;
+    expect(got.kind).toBe('message');
+    client.terminate();
+  }, 20_000);
+
+  it('closes with 1009 when fragments exceed the cap', async () => {
+    h = await startCodexProxy([{ modelId: 'm', npm: '@ai-sdk/anthropic', apiKey: 'sk-test', upstreamModelId: 'claude-sonnet-4-6' }], { requireAuth: false });
+    const client = new WebSocket(`ws://127.0.0.1:${h.port}/v1/responses`);
+    await new Promise(r => client.once('open', r));
+    const signal = firstSignal(client);
+    const chunk = Buffer.alloc(12 * 1024 * 1024, 0x61);
+    client.send(chunk, { binary: false, fin: false });
+    client.send(chunk, { binary: false, fin: false });
+    client.send(chunk, { binary: false, fin: false });
+    client.send(Buffer.from('}'), { binary: false, fin: true });
+    const got = await signal;
+    // The server sends 1009; a client still mid-send observes the abrupt end as 1006.
+    expect(got.kind).toBe('close');
+    expect([1009, 1006]).toContain(got.code);
+  }, 20_000);
+});
