@@ -92,3 +92,16 @@ describe('parseImageTooLarge', () => {
     expect(parseImageTooLarge('prompt is too long')).toBe(false);
   });
 });
+
+describe('review fix: dimension refusals', () => {
+  it('resizes over-wide images on a forced retry even when under the byte cap', async () => {
+    const tiny = 'data:image/png;base64,' + (await sharp({ create: { width: 9000, height: 400, channels: 3, background: '#336699' } }).png().toBuffer()).toString('base64');
+    expect(b64len(tiny)).toBeLessThan(CAP);
+    const { input, resized } = await fitImagesInInput([userImage(tiny)] as never, policy, { resizeOversizedDimensions: true });
+    expect(resized).toBe(1);
+    const meta = await sharp(Buffer.from(urlOf(input[0]).split(',')[1]!, 'base64')).metadata();
+    expect(Math.max(meta.width!, meta.height!)).toBe(2576);
+    const untouched = await fitImagesInInput([userImage(tiny)] as never, policy);
+    expect(untouched.resized).toBe(0);
+  }, 60_000);
+});

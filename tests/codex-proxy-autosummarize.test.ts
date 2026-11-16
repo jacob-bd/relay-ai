@@ -247,3 +247,93 @@ describe('oversized images (Task 9)', () => {
     expect(textOf(rec[1]!).length).toBeLessThan(textOf(rec[0]!).length);
   }, 60_000);
 });
+
+describe('review fixes (proxy)', () => {
+  it('does not summarize a rewound history just because an old checkpoint exists', async () => {
+    const { model, rec } = fakeModel();
+    await start(model);
+    await post(history(40));
+    const calls = rec.summary.length;
+    expect(calls).toBeGreaterThanOrEqual(1);
+    const rewound = history(20);
+    (rewound[1] as { content: Array<{ text: string }> }).content[0]!.text = 'q0 edited';
+    await post(rewound);
+    expect(rec.summary.length).toBe(calls);
+    expect(textOf(rec.main[rec.main.length - 1]!)).not.toContain('[Summary of earlier conversation]');
+  });
+
+  it('keeps summarized requests below the safety-trim line', async () => {
+    const { prepareRelayBody } = await import('../src/codex-proxy.js');
+    const { estimateResponsesBodyChars } = await import('../src/codex-context-budget.js');
+    const { model } = fakeModel();
+    const ctx = { route: route as never, languageModel: model as never, key: 'edge', label: 'l', log: () => {} };
+    const limit = 20_000 * 3;
+    let items = history(40);
+    await prepareRelayBody({ input: items }, ctx);
+    let probe = await prepareRelayBody({ input: items }, ctx);
+    let i = 0;
+    while (probe.sentChars < 0.825 * limit && i < 200) {
+      items = [...items, { type: 'message', role: 'user', content: [{ type: 'input_text', text: `pad${i++} ${'p'.repeat(200)}` }] }];
+      probe = await prepareRelayBody({ input: items }, ctx);
+    }
+    expect(estimateResponsesBodyChars(probe.body)).toBeLessThanOrEqual(0.82 * limit);
+  });
+
+  it('stops without calling the model when the client disconnects during summarizing', async () => {
+    const rec = { main: 0, summaryStarted: 0 };
+    const model = new MockLanguageModelV4({
+      doStream: async (opts: { prompt: Prompt; abortSignal?: AbortSignal }) => {
+        if (textOf(opts.prompt).includes('CONTEXT CHECKPOINT COMPACTION') && !textOf(opts.prompt).includes('[Summary of earlier conversation]')) {
+          rec.summaryStarted++;
+          await new Promise((_, reject) => opts.abortSignal?.addEventListener('abort', () => reject(opts.abortSignal!.reason)));
+        }
+        rec.main++;
+        return { stream: textStream('answer') };
+      },
+    } as never);
+    await start(model);
+    const ac = new AbortController();
+    const pending = fetch(`http://127.0.0.1:${handle!.port}/v1/responses`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', session_id: 'gone' },
+      body: JSON.stringify({ model: route.modelId, input: history(40), stream: true }), signal: ac.signal,
+    }).then(r => r.text()).catch(() => '');
+    for (let i = 0; i < 50 && rec.summaryStarted === 0; i++) await new Promise(r => setTimeout(r, 20));
+    ac.abort();
+    await pending;
+    await new Promise(r => setTimeout(r, 300));
+    expect(rec.summaryStarted).toBeGreaterThanOrEqual(1);
+    expect(rec.main).toBe(0);
+  });
+
+  it('keeps a tail call to a hoisted namespaced tool pointing at the same tool', async () => {
+    const { model, rec } = fakeModel();
+    await start(model);
+    const ns = { type: 'namespace', name: 'mcp__github', tools: [{ type: 'function', name: 'create_issue', parameters: { type: 'object', properties: {} } }] };
+    const items = history(40);
+    items.splice(1, 0, { type: 'tool_search_call', call_id: 's1', arguments: '{}' }, { type: 'tool_search_output', call_id: 's1', tools: [ns] });
+    items.push({ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'file it' }] },
+      { type: 'function_call', call_id: 'k1', namespace: 'mcp__github', name: 'create_issue', arguments: '{}' },
+      { type: 'function_call_output', call_id: 'k1', output: 'created' });
+    await post(items);
+    expect(textOf(rec.main[0]!)).toContain('[Summary of earlier conversation]');
+    const toolNames = ((rec.tools[0] ?? []) as Array<{ name: string }>).map(t => t.name);
+    const call = (rec.main[0]! as Array<{ role: string; content: Array<{ type: string; toolName?: string }> }>)
+      .flatMap(m => (Array.isArray(m.content) ? m.content : [])).find(p => p.type === 'tool-call');
+    expect(call?.toolName).toBeDefined();
+    expect(toolNames).toContain(call!.toolName);
+  });
+
+  it('does not treat switching between two Claude providers as a model-family switch', async () => {
+    const { model, rec } = fakeModel();
+    vi.mocked(createLanguageModel).mockResolvedValue(model as never);
+    const anthropicRoute = { ...route, modelId: 'anthropic__claude-opus-5-5', npm: '@ai-sdk/anthropic', providerId: 'anthropic' };
+    handle = await startCodexProxy([route as never, anthropicRoute as never], { requireAuth: false });
+    const send = (modelId: string) => fetch(`http://127.0.0.1:${handle!.port}/v1/responses`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', session_id: 'claude-hop' },
+      body: JSON.stringify({ model: modelId, input: history(13, 1_200), stream: true }),
+    }).then(r => r.text());
+    await send(route.modelId);
+    await send(anthropicRoute.modelId);
+    expect(rec.summary).toHaveLength(0);
+  });
+});

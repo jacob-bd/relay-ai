@@ -212,11 +212,20 @@ interface Checkpoint {
 const checkpoints = new Map<string, Checkpoint>();
 const inFlight = new Map<string, Promise<Checkpoint>>();
 
+/** Cosmetic fields Codex may re-serialize differently on a resend (ids, status, empty annotations). */
+function hashForm(item: ResponsesInputItem): string {
+  return JSON.stringify(item, (key, value) => {
+    if (key === 'id' || key === 'status') return undefined;
+    if (key === 'annotations' && Array.isArray(value) && value.length === 0) return undefined;
+    return value;
+  });
+}
+
 function chainHashes(items: ResponsesInputItem[]): string[] {
   const out: string[] = [];
   let h = '';
   for (const item of items) {
-    h = createHash('sha256').update(h).update(JSON.stringify(item)).digest('hex');
+    h = createHash('sha256').update(h).update(hashForm(item)).digest('hex');
     out.push(h);
   }
   return out;
@@ -325,9 +334,18 @@ export async function applySummaryCheckpoint(args: ApplySummaryArgs): Promise<Ap
   return { input: assemble(pinned, cp, split.tail), hoistedTools: cp.hoistedTools, summarized: true, reused: false, summarizedItems: split.head.length };
 }
 
-/** True when this conversation already has a summary that later turns must keep using. */
-export function hasCheckpoint(key: string): boolean {
-  return checkpoints.has(key);
+/**
+ * True when this conversation has a summary whose covered history is still the
+ * prefix of `input`. A stale one (edit, rewind, fork, Codex compaction) is
+ * dropped so the normal triggers decide again instead of summarizing early.
+ */
+export function hasMatchingCheckpoint(key: string, input: ResponsesInputItem[]): boolean {
+  const cp = checkpoints.get(key);
+  if (!cp) return false;
+  const { rest } = partitionPinned(input);
+  if (cp.headLength <= rest.length && chainHashes(rest.slice(0, cp.headLength))[cp.headLength - 1] === cp.headHash) return true;
+  checkpoints.delete(key);
+  return false;
 }
 
 export function __resetAutoSummarizeForTests(): void {

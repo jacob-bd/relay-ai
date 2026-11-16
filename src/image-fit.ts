@@ -49,6 +49,12 @@ async function loadSharp(): Promise<SharpFn | undefined> {
 
 const cache = new Map<string, string>();
 
+function headerSize(buf: Buffer): { width: number; height: number } | undefined {
+  const dims = headerDimensions(buf);
+  const m = dims.match(/^(\d+)x(\d+)$/);
+  return m ? { width: Number(m[1]), height: Number(m[2]) } : undefined;
+}
+
 function headerDimensions(buf: Buffer): string {
   if (buf.length >= 24 && buf.readUInt32BE(0) === 0x89504e47) return `${buf.readUInt32BE(16)}x${buf.readUInt32BE(20)}`;
   if (buf.length > 4 && buf[0] === 0xff && buf[1] === 0xd8) {
@@ -102,12 +108,21 @@ function remember(key: string, value: string): void {
 
 type Part = Record<string, unknown>;
 
-async function fitPart(part: Part, policy: ImageFitPolicy, counts: { resized: number; omitted: number }): Promise<Part> {
+export interface FitOptions {
+  /** After a provider refused image dimensions: also shrink images whose long edge exceeds the policy. */
+  resizeOversizedDimensions?: boolean;
+}
+
+async function fitPart(part: Part, policy: ImageFitPolicy, counts: { resized: number; omitted: number }, opts: FitOptions): Promise<Part> {
   if (part['type'] !== 'input_image' || typeof part['image_url'] !== 'string') return part;
   const url = part['image_url'] as string;
   if (!url.startsWith('data:image/')) return part;
   const b64 = url.length - url.indexOf(',') - 1;
-  if (b64 <= policy.maxBase64Bytes) return part;
+  if (b64 <= policy.maxBase64Bytes) {
+    if (!opts.resizeOversizedDimensions) return part;
+    const size = headerSize(Buffer.from(url.slice(url.indexOf(',') + 1, url.indexOf(',') + 1 + 65_536), 'base64'));
+    if (!size || Math.max(size.width, size.height) <= policy.maxLongEdge) return part;
+  }
   const key = createHash('sha256').update(`${policy.maxLongEdge}:${policy.maxBase64Bytes}:`).update(url).digest('hex');
   let fitted = cache.get(key);
   if (!fitted) {
@@ -123,11 +138,11 @@ async function fitPart(part: Part, policy: ImageFitPolicy, counts: { resized: nu
   return { type: 'input_text', text: `[image omitted: ${dims} image exceeds this model's size limit]` };
 }
 
-async function fitParts(parts: unknown[], policy: ImageFitPolicy, counts: { resized: number; omitted: number }): Promise<unknown[] | undefined> {
+async function fitParts(parts: unknown[], policy: ImageFitPolicy, counts: { resized: number; omitted: number }, opts: FitOptions): Promise<unknown[] | undefined> {
   let changed = false;
   const out: unknown[] = [];
   for (const p of parts) {
-    const next = p && typeof p === 'object' ? await fitPart(p as Part, policy, counts) : p;
+    const next = p && typeof p === 'object' ? await fitPart(p as Part, policy, counts, opts) : p;
     if (next !== p) changed = true;
     out.push(next);
   }
@@ -137,6 +152,7 @@ async function fitParts(parts: unknown[], policy: ImageFitPolicy, counts: { resi
 export async function fitImagesInInput(
   input: ResponsesInputItem[],
   policy: ImageFitPolicy,
+  opts: FitOptions = {},
 ): Promise<{ input: ResponsesInputItem[]; resized: number; omitted: number }> {
   const counts = { resized: 0, omitted: 0 };
   let changed = false;
@@ -145,10 +161,10 @@ export async function fitImagesInInput(
     const it = item as unknown as Record<string, unknown>;
     let next: ResponsesInputItem = item;
     if (Array.isArray(it['content'])) {
-      const parts = await fitParts(it['content'] as unknown[], policy, counts);
+      const parts = await fitParts(it['content'] as unknown[], policy, counts, opts);
       if (parts) next = { ...it, content: parts } as unknown as ResponsesInputItem;
     } else if (Array.isArray(it['output'])) {
-      const parts = await fitParts(it['output'] as unknown[], policy, counts);
+      const parts = await fitParts(it['output'] as unknown[], policy, counts, opts);
       if (parts) next = { ...it, output: parts } as unknown as ResponsesInputItem;
     }
     if (next !== item) changed = true;

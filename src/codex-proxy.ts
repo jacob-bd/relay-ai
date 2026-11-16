@@ -25,7 +25,7 @@ import {
   parseImageTooLarge,
 } from './codex-context-budget.js';
 import { fitImagesInInput, imagePolicyForRoute, REACTIVE_IMAGE_POLICY } from './image-fit.js';
-import { applySummaryCheckpoint, autoSummarizeMode, buildSummaryParams, hasCheckpoint } from './codex-auto-summarize.js';
+import { applySummaryCheckpoint, autoSummarizeMode, buildSummaryParams, hasMatchingCheckpoint } from './codex-auto-summarize.js';
 import { providerKind } from './registry/provider-kind.js';
 import { localTimestamp } from './trace-log.js';
 import { applyClaudeCodeOAuthIdentity } from './oauth/claude-code-identity.js';
@@ -525,14 +525,30 @@ export interface CodexProxyOptions {
 
 // ── Relay context budget & auto-summarize (#94, #95) ─────────────────────────
 const BUDGET_RATIO = 0.85;
+/** Summarized/reused requests land below this, leaving headroom under the 0.85
+ *  safety trim (translation adds identity text and reshapes tool definitions). */
+const SUMMARY_BUDGET_RATIO = 0.82;
 const SWITCH_TRIGGER_RATIO = 0.5;
 const OVERFLOW_TARGET_RATIO = 0.6;
 const SWITCH_TARGET_RATIO = 0.35;
 const SUMMARY_CHUNK_RATIO = 0.6;
 const SUMMARY_RESERVE_TOKENS = 4_000;
 
+/** Model vendor, not provider: Claude on Vertex and Claude on Anthropic are the same family. */
+export function modelVendor(modelId: string, fallback = 'other'): string {
+  const sep = modelId.lastIndexOf('__');
+  const id = (sep >= 0 ? modelId.slice(sep + 2) : modelId).toLowerCase();
+  const rules: Array<[RegExp, string]> = [
+    [/claude|fable|mythos/, 'claude'], [/gpt|^o\d|codex|chatgpt/, 'openai'], [/gemini|gemma/, 'gemini'],
+    [/deepseek/, 'deepseek'], [/kimi|moonshot/, 'kimi'], [/glm|zai|zhipu/, 'glm'], [/qwen|qwq/, 'qwen'],
+    [/grok/, 'grok'], [/mistral|codestral|magistral|ministral|devstral/, 'mistral'], [/minimax/, 'minimax'],
+  ];
+  for (const [re, vendor] of rules) if (re.test(id)) return vendor;
+  return fallback;
+}
+
 function routeFamily(route: CodexProxyRoute): string {
-  return providerKind(route.providerId?.trim().toLowerCase() ?? '') || route.npm;
+  return modelVendor(route.upstreamModelId ?? route.modelId, `other:${providerKind(route.providerId?.trim().toLowerCase() ?? '') || route.npm}`);
 }
 
 function toolKey(tool: unknown): string {
@@ -576,7 +592,7 @@ export async function prepareRelayBody(
     : { ...body, input: lifted.input, ...(lifted.tools.length || Array.isArray(body.tools) ? { tools: lifted.tools } : {}) };
   const imagePolicy = ctx.forceImages ? REACTIVE_IMAGE_POLICY : imagePolicyForRoute(ctx.route);
   if (imagePolicy) {
-    const fitted = await fitImagesInInput(next.input as ResponsesInputItem[], imagePolicy);
+    const fitted = await fitImagesInInput(next.input as ResponsesInputItem[], imagePolicy, { resizeOversizedDimensions: Boolean(ctx.forceImages) });
     if (fitted.input !== next.input) {
       next = { ...next, input: fitted.input };
       process.stderr.write(`[relay-ai] ${localTimestamp()} ${ctx.label}: resized ${fitted.resized} / omitted ${fitted.omitted} oversized image(s)\n`);
@@ -595,7 +611,7 @@ export async function prepareRelayBody(
   const tokens = total / ratio;
   const overflow = Boolean(ctx.force) || tokens > BUDGET_RATIO * window;
   const switched = mode === 'all' && previous !== undefined && previous !== family && tokens > SWITCH_TRIGGER_RATIO * window;
-  if (!overflow && !switched && !hasCheckpoint(ctx.key)) return { body: next, sentChars: total };
+  if (!overflow && !switched && !hasMatchingCheckpoint(ctx.key, next.input as ResponsesInputItem[])) return { body: next, sentChars: total };
 
   const reason = overflow || !switched ? 'overflow' : 'switch';
   const input = next.input as ResponsesInputItem[];
@@ -605,7 +621,7 @@ export async function prepareRelayBody(
     const result = await applySummaryCheckpoint({
       input,
       key: ctx.key,
-      budgetChars: Math.floor(BUDGET_RATIO * window * ratio) - overhead,
+      budgetChars: Math.floor(SUMMARY_BUDGET_RATIO * window * ratio) - overhead,
       targetChars: Math.floor(targetRatio * window * ratio) - overhead,
       chunkChars: Math.floor(SUMMARY_CHUNK_RATIO * window * ratio),
       summaryReserveChars: Math.floor(SUMMARY_RESERVE_TOKENS * ratio),
@@ -636,8 +652,8 @@ function httpBudgetFallbackKey(body: Record<string, unknown>): string {
 }
 
 /** Native passthrough turns still count for model-family switch detection (#94). */
-function noteNativeTurn(headers: CodexRequestHeaders, body: Record<string, unknown>): void {
-  noteModelFamily(conversationKey(extractConversationId(headers, body), httpBudgetFallbackKey(body)), 'openai-native');
+function noteNativeTurn(headers: CodexRequestHeaders, body: Record<string, unknown>, modelId: string): void {
+  noteModelFamily(conversationKey(extractConversationId(headers, body), httpBudgetFallbackKey(body)), modelVendor(modelId, 'openai'));
 }
 
 /** Overflow seen in a failed attempt: calibrate from the provider's own token count. */
@@ -986,7 +1002,7 @@ export async function startCodexProxy(
             return;
           }
           if (dispatch.kind === 'native') {
-            noteNativeTurn(req.headers, body);
+            noteNativeTurn(req.headers, body, modelId);
             audit({
               transport: 'http', requestedModel: modelId, dispatch: 'native', phase: 'dispatch',
               provider: 'openai-native', routeModel: modelId, upstreamModel: modelId,
@@ -1147,8 +1163,17 @@ export async function startCodexProxy(
             // frame right away; a retried attempt reuses the same id.
             const responseId = newResponseId();
             if (!v2Compaction) writeResponsesCreated(modelId, responseId, rawWrite);
+            try {
             for (let attempt = 0; attempt < 2; attempt++) {
               const prepared = await prepare(attempt);
+              if (abort.signal.aborted) {
+                audit({
+                  transport: 'http', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
+                  provider: route.providerId ?? 'relay', routeModel: route.modelId,
+                  upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId, outcome: 'error', status: 'client-aborted',
+                });
+                break;
+              }
               const params = buildParams(prepared.body);
               const gate = createOverflowGate(rawWrite, attempt === 0 && !v2Compaction);
               const write = gate.write;
@@ -1194,10 +1219,22 @@ export async function startCodexProxy(
               });
               break;
             }
+            } catch (err) {
+              // Headers are already sent: report through the stream, never sendJson.
+              const msg = formatUpstreamError(err);
+              log(`handler error (stream): ${msg}`);
+              audit({
+                transport: 'http', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
+                provider: route.providerId ?? 'relay', routeModel: route.modelId,
+                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId, outcome: 'error', status: 500,
+              });
+              if (!res.writableEnded) writeResponsesErrorStream(modelId, msg, rawWrite, 500);
+            }
             res.end();
           } else {
             for (let attempt = 0; attempt < 2; attempt++) {
               const prepared = await prepare(attempt);
+              if (abort.signal.aborted) break;
               const params = buildParams(prepared.body);
               try {
                 const response = v2Compaction
@@ -1632,7 +1669,7 @@ export async function startCodexProxy(
               return;
             }
             if (dispatch.kind === 'native') {
-              noteNativeTurn(req.headers, body);
+              noteNativeTurn(req.headers, body, modelId);
               audit({
                 transport: 'ws', requestedModel: modelId, dispatch: 'native', phase: 'dispatch',
                 provider: 'openai-native', routeModel: modelId, upstreamModel: modelId,
@@ -1841,6 +1878,7 @@ export async function startCodexProxy(
                 route, languageModel, key: budgetKey, label, log, signal: socketAbort.signal,
                 force: attempt > 0 && retryKind === 'context', forceImages: attempt > 0 && retryKind === 'image',
               });
+              if (socketAbort.signal.aborted) break;
               let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
                 prepared.body as unknown as import('./codex-responses-adapter.js').ResponsesRequest,
                 route.npm,

@@ -163,3 +163,32 @@ describe('applySummaryCheckpoint', () => {
     expect(again.hoistedTools).toEqual([ns]);
   });
 });
+
+describe('review fixes: checkpoint matching', () => {
+  const hist = (n: number): ResponsesInputItem[] => {
+    const items: ResponsesInputItem[] = [user('<environment_context>c</environment_context>')];
+    for (let i = 0; i < n; i++) items.push(user(`q${i} ${'x'.repeat(1000)}`), asst(`a${i} ${'y'.repeat(1000)}`));
+    return items;
+  };
+  const base = { key: 'm', budgetChars: 30_000, targetChars: 18_000, chunkChars: 1_000_000, summaryReserveChars: 2_000, reason: 'overflow' as const };
+
+  it('hasMatchingCheckpoint is false for a rewound or edited history and drops the stale checkpoint', async () => {
+    const { hasMatchingCheckpoint } = await import('../src/codex-auto-summarize.js');
+    await applySummaryCheckpoint({ ...base, input: hist(30), summarize: vi.fn().mockResolvedValue('S1') });
+    expect(hasMatchingCheckpoint('m', [...hist(30), user('more')])).toBe(true);
+    const edited = hist(30);
+    edited[1] = user('edited first prompt');
+    expect(hasMatchingCheckpoint('m', edited)).toBe(false);
+    expect(hasMatchingCheckpoint('m', [...hist(30), user('more')])).toBe(false);
+  });
+
+  it('matches items that differ only in id, status or empty annotations', async () => {
+    const summarize = vi.fn().mockResolvedValue('S1');
+    const withIds = hist(30).map((item, i) => (i % 2 ? { ...item, id: `msg_${i}`, status: 'completed' } : item)) as ResponsesInputItem[];
+    await applySummaryCheckpoint({ ...base, input: withIds, summarize });
+    const reshaped = hist(30).map((item, i) => (i % 2 ? { ...item, id: `other_${i}` } : item)) as ResponsesInputItem[];
+    const again = await applySummaryCheckpoint({ ...base, input: [...reshaped, user('next')], summarize });
+    expect(again.reused).toBe(true);
+    expect(summarize).toHaveBeenCalledTimes(1);
+  });
+});
