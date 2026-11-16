@@ -305,7 +305,7 @@ function flattenNamespaceTools(ns: ResponsesNamespaceTool): Array<ResponsesFunct
  * The Vercel AI SDK / Responses translation only reads `tools`, so lift them there
  * before the rest of translation runs, or the model never sees them.
  */
-function liftAdditionalToolsInput(
+export function liftAdditionalToolsInput(
   input: ResponsesInputItem[],
   tools: ResponsesTool[],
 ): { input: ResponsesInputItem[]; tools: ResponsesTool[] } {
@@ -1705,8 +1705,9 @@ export function decodeCompactionContent(encrypted: string | undefined): string |
   }
 }
 
-function makeCompactionItem(summary: string): Record<string, unknown> {
-  return { type: 'compaction', id: newItemId('cmp'), encrypted_content: encodeCompactionContent(summary) };
+/** A fixed `id` keeps the item byte-identical across turns (prompt-cache stable). */
+export function makeCompactionItem(summary: string, id: string = newItemId('cmp')): Record<string, unknown> {
+  return { type: 'compaction', id, encrypted_content: encodeCompactionContent(summary) };
 }
 
 /** Append the summarization instruction as a final user turn so the model produces a summary. */
@@ -1751,6 +1752,42 @@ async function collectCompactionSummary(model: LanguageModel, params: CodexSdkCa
   // placeholder summary: it would replace the thread's history with nothing.
   if (firstStreamError) throw firstStreamError.error;
   return text;
+}
+
+/**
+ * Relay auto-summary call (#94/#95): streaming (ChatGPT-login rejects non-stream),
+ * aborted by the caller's signal or after 120 s without data, and an empty
+ * result is an error — an empty summary would silently erase history.
+ */
+export async function collectSummaryText(model: LanguageModel, params: CodexSdkCallParams, signal?: AbortSignal): Promise<string> {
+  const idle = new AbortController();
+  let timer = setTimeout(() => idle.abort(new Error('summary: no data from provider for 120s')), STREAM_IDLE_TIMEOUT_MS);
+  const abortSignal = signal ? AbortSignal.any([signal, idle.signal]) : idle.signal;
+  const { toolContext: _toolContext, ...sdkParams } = params;
+  void _toolContext;
+  let firstStreamError: unknown;
+  try {
+    const result = streamText({
+      model,
+      ...sdkParams,
+      maxRetries: 0,
+      abortSignal,
+      onError: event => { firstStreamError ??= event.error; },
+    } as Parameters<typeof streamText>[0]);
+    Promise.resolve(result.toolResults).catch(() => {});
+    let text = '';
+    for await (const delta of result.textStream) {
+      text += delta;
+      clearTimeout(timer);
+      timer = setTimeout(() => idle.abort(new Error('summary: no data from provider for 120s')), STREAM_IDLE_TIMEOUT_MS);
+    }
+    if (firstStreamError) throw firstStreamError;
+    if (abortSignal.aborted) throw abortSignal.reason;
+    if (!text.trim()) throw new Error('summary: provider returned an empty summary');
+    return text;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** The full non-streaming Responses body for a v2 compaction turn: exactly one compaction item. */

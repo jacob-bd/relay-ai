@@ -1458,3 +1458,35 @@ describe('context overflow error code (#95)', () => {
     expect(responsesErrorBody('m', 'nope', 400).error).toEqual(expect.objectContaining({ code: '400' }));
   });
 });
+
+describe('collectSummaryText (#94/#95)', () => {
+  const params = { messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'history' }] }] } as never;
+  const model = (chunks: LanguageModelV4StreamPart[]) => new MockLanguageModelV4({
+    doStream: { stream: simulateReadableStream({ chunks, initialDelayInMs: null, chunkDelayInMs: null }) },
+  });
+  const done = { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } } } as LanguageModelV4StreamPart;
+
+  it('returns the streamed text', async () => {
+    const { collectSummaryText } = await import('../src/codex-responses-adapter.js');
+    const text = await collectSummaryText(model([{ type: 'stream-start', warnings: [] }, { type: 'text-start', id: 't' }, { type: 'text-delta', id: 't', delta: 'the summary' }, { type: 'text-end', id: 't' }, done]), params);
+    expect(text).toBe('the summary');
+  });
+
+  it('throws on an empty summary', async () => {
+    const { collectSummaryText } = await import('../src/codex-responses-adapter.js');
+    await expect(collectSummaryText(model([{ type: 'stream-start', warnings: [] }, done]), params)).rejects.toThrow(/empty summary/);
+  });
+
+  it('keeps the upstream error', async () => {
+    const { collectSummaryText } = await import('../src/codex-responses-adapter.js');
+    const upstream = Object.assign(new Error('rate limited'), { statusCode: 429 });
+    await expect(collectSummaryText(model([{ type: 'stream-start', warnings: [] }, { type: 'error', error: upstream }]), params)).rejects.toBe(upstream);
+  });
+
+  it('stops when the caller aborts', async () => {
+    const { collectSummaryText } = await import('../src/codex-responses-adapter.js');
+    const ac = new AbortController();
+    ac.abort(new Error('client gone'));
+    await expect(collectSummaryText(model([{ type: 'stream-start', warnings: [] }, done]), params, ac.signal)).rejects.toThrow();
+  });
+});
