@@ -12,6 +12,7 @@ export default defineConfig({
   },
   external: [
     '@napi-rs/keyring',
+    'sharp',
     'ws',
     /^@ai-sdk\//,
     '@openrouter/ai-sdk-provider',

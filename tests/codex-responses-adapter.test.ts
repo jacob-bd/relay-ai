@@ -1325,3 +1325,187 @@ describe('translateResponsesRequest app-injected function_call_output', () => {
     expect(out.messages.some(m => m.role === 'tool')).toBe(false);
   });
 });
+
+describe('relay usage reporting (#92)', () => {
+  it('writeResponsesStream reports usage incl. cache read/write in onDone', async () => {
+    const { writeResponsesStream } = await import('../src/codex-responses-adapter.js');
+    async function* stream() {
+      yield { type: 'text-start', id: 't1' };
+      yield { type: 'text-delta', id: 't1', text: 'hi' };
+      yield { type: 'text-end', id: 't1' };
+      yield {
+        type: 'finish',
+        finishReason: 'stop',
+        totalUsage: { inputTokens: 1000, outputTokens: 50, inputTokenDetails: { cacheReadTokens: 900, cacheWriteTokens: 80 } },
+      };
+    }
+    let summary: { usage?: unknown } | undefined;
+    await writeResponsesStream(stream() as never, 'test-model', () => {}, s => { summary = s; });
+    expect(summary?.usage).toEqual({ inputTokens: 1000, outputTokens: 50, cacheReadTokens: 900, cacheWriteTokens: 80 });
+  });
+
+  it('generateResponsesResponse calls onUsage', async () => {
+    const { generateResponsesResponse } = await import('../src/codex-responses-adapter.js');
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => ({
+        content: [{ type: 'text', text: 'ok' }],
+        finishReason: { unified: 'stop', raw: 'stop' },
+        usage: { inputTokens: { total: 500, noCache: 100, cacheRead: 300, cacheWrite: 100 }, outputTokens: { total: 7, text: 7, reasoning: 0 } },
+        warnings: [],
+      }),
+    });
+    let usage: unknown;
+    await generateResponsesResponse(model, { messages: [{ role: 'user', content: [{ type: 'text', text: 'q' }] }] } as never, 'm', u => { usage = u; });
+    expect(usage).toEqual({ inputTokens: 500, outputTokens: 7, cacheReadTokens: 300, cacheWriteTokens: 100 });
+  });
+});
+
+describe('live reasoning summaries (#93)', () => {
+  async function run(parts: Array<Record<string, unknown>>) {
+    const { writeResponsesStream } = await import('../src/codex-responses-adapter.js');
+    const chunks: string[] = [];
+    async function* stream() { for (const p of parts) yield p; }
+    await writeResponsesStream(stream() as never, 'test-model', c => chunks.push(c));
+    return parseSseEvents(chunks.join(''));
+  }
+  const finish = { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 1, outputTokens: 1 } };
+
+  it('streams reasoning summary deltas as they arrive', async () => {
+    const events = await run([
+      { type: 'reasoning-start', id: 'r1' },
+      { type: 'reasoning-delta', id: 'r1', text: 'Let me ' },
+      { type: 'reasoning-delta', id: 'r1', text: 'think' },
+      { type: 'reasoning-end', id: 'r1' },
+      { type: 'text-start', id: 't1' },
+      { type: 'text-delta', id: 't1', text: 'answer' },
+      { type: 'text-end', id: 't1' },
+      finish,
+    ]);
+    const names = events.map(e => e.event);
+    const deltas = events.filter(e => e.event === 'response.reasoning_summary_text.delta').map(e => e.data.delta);
+    expect(deltas).toEqual(['Let me ', 'think']);
+    expect(names.indexOf('response.reasoning_summary_part.added')).toBeGreaterThan(-1);
+    expect(names.indexOf('response.reasoning_summary_text.delta')).toBeLessThan(names.indexOf('response.output_text.delta'));
+    const reasoningDone = events.findIndex(e => e.event === 'response.output_item.done' && e.data.item.type === 'reasoning');
+    expect(reasoningDone).toBeLessThan(names.indexOf('response.output_text.delta'));
+    const completed = events.find(e => e.event === 'response.completed')!.data.response;
+    expect(completed.output[0]).toEqual(expect.objectContaining({ type: 'reasoning', summary: [{ type: 'summary_text', text: 'Let me think' }] }));
+  });
+
+  it('two reasoning blocks produce two closed reasoning items', async () => {
+    const events = await run([
+      { type: 'reasoning-start', id: 'a' },
+      { type: 'reasoning-delta', id: 'a', text: 'first' },
+      { type: 'reasoning-end', id: 'a' },
+      { type: 'reasoning-start', id: 'b' },
+      { type: 'reasoning-delta', id: 'b', text: 'second' },
+      { type: 'reasoning-end', id: 'b' },
+      { type: 'text-start', id: 't1' },
+      { type: 'text-delta', id: 't1', text: 'ok' },
+      { type: 'text-end', id: 't1' },
+      finish,
+    ]);
+    const added = events.filter(e => e.event === 'response.output_item.added' && e.data.item.type === 'reasoning').map(e => e.data.item.id);
+    const done = events.filter(e => e.event === 'response.output_item.done' && e.data.item.type === 'reasoning').map(e => e.data.item.id);
+    expect(added).toHaveLength(2);
+    expect(new Set(added).size).toBe(2);
+    expect(done).toEqual(added);
+    const completed = events.find(e => e.event === 'response.completed')!.data.response;
+    const texts = completed.output.filter((o: { type: string }) => o.type === 'reasoning').map((o: { summary: Array<{ text: string }> }) => o.summary[0]?.text);
+    expect(texts).toEqual(['first', 'second']);
+  });
+
+  it('closes a reasoning block left open at stream end', async () => {
+    const events = await run([
+      { type: 'reasoning-start', id: 'r1' },
+      { type: 'reasoning-delta', id: 'r1', text: 'dangling' },
+      finish,
+    ]);
+    const names = events.map(e => e.event);
+    expect(names).toContain('response.reasoning_summary_text.done');
+    expect(names).toContain('response.reasoning_summary_part.done');
+    expect(events.some(e => e.event === 'response.output_item.done' && e.data.item.type === 'reasoning')).toBe(true);
+  });
+});
+
+describe('context overflow error code (#95)', () => {
+  async function failWith(error: unknown) {
+    const { writeResponsesStream } = await import('../src/codex-responses-adapter.js');
+    const chunks: string[] = [];
+    let summary: { contextOverflow?: { actualTokens?: number } } | undefined;
+    async function* stream() { yield { type: 'error', error }; }
+    await writeResponsesStream(stream() as never, 'm', c => chunks.push(c), s => { summary = s as never; });
+    const failed = parseSseEvents(chunks.join('')).find(e => e.event === 'response.failed')!.data.response.error;
+    return { failed, summary };
+  }
+
+  it('maps prompt-too-long stream errors to context_length_exceeded', async () => {
+    const { failed, summary } = await failWith(Object.assign(new Error('prompt is too long: 1207698 tokens > 1000000 maximum'), { statusCode: 400 }));
+    expect(failed).toEqual(expect.objectContaining({ type: 'invalid_request_error', code: 'context_length_exceeded' }));
+    expect(summary?.contextOverflow?.actualTokens).toBe(1207698);
+  });
+
+  it('keeps ordinary 400s as api_error without a code', async () => {
+    const { failed, summary } = await failWith(Object.assign(new Error('bad tool schema'), { statusCode: 400 }));
+    expect(failed.type).toBe('api_error');
+    expect(failed.code).toBeUndefined();
+    expect(summary?.contextOverflow).toBeUndefined();
+  });
+
+  it('responsesErrorBody maps overflow for thrown errors', () => {
+    const body = responsesErrorBody('m', 'prompt is too long: 5 tokens > 4 maximum', 400);
+    expect(body.error).toEqual(expect.objectContaining({ type: 'invalid_request_error', code: 'context_length_exceeded' }));
+    expect(responsesErrorBody('m', 'nope', 400).error).toEqual(expect.objectContaining({ code: '400' }));
+  });
+});
+
+describe('collectSummaryText (#94/#95)', () => {
+  const params = { messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'history' }] }] } as never;
+  const model = (chunks: LanguageModelV4StreamPart[]) => new MockLanguageModelV4({
+    doStream: { stream: simulateReadableStream({ chunks, initialDelayInMs: null, chunkDelayInMs: null }) },
+  });
+  const done = { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } } } as LanguageModelV4StreamPart;
+
+  it('returns the streamed text', async () => {
+    const { collectSummaryText } = await import('../src/codex-responses-adapter.js');
+    const text = await collectSummaryText(model([{ type: 'stream-start', warnings: [] }, { type: 'text-start', id: 't' }, { type: 'text-delta', id: 't', delta: 'the summary' }, { type: 'text-end', id: 't' }, done]), params);
+    expect(text).toBe('the summary');
+  });
+
+  it('throws on an empty summary', async () => {
+    const { collectSummaryText } = await import('../src/codex-responses-adapter.js');
+    await expect(collectSummaryText(model([{ type: 'stream-start', warnings: [] }, done]), params)).rejects.toThrow(/empty summary/);
+  });
+
+  it('keeps the upstream error', async () => {
+    const { collectSummaryText } = await import('../src/codex-responses-adapter.js');
+    const upstream = Object.assign(new Error('rate limited'), { statusCode: 429 });
+    await expect(collectSummaryText(model([{ type: 'stream-start', warnings: [] }, { type: 'error', error: upstream }]), params)).rejects.toBe(upstream);
+  });
+
+  it('stops when the caller aborts', async () => {
+    const { collectSummaryText } = await import('../src/codex-responses-adapter.js');
+    const ac = new AbortController();
+    ac.abort(new Error('client gone'));
+    await expect(collectSummaryText(model([{ type: 'stream-start', warnings: [] }, done]), params, ac.signal)).rejects.toThrow();
+  });
+});
+
+describe('caller-owned response.created (#95 retry)', () => {
+  it('uses the given response id and skips response.created', async () => {
+    const { writeResponsesStream, writeResponsesCreated } = await import('../src/codex-responses-adapter.js');
+    const chunks: string[] = [];
+    writeResponsesCreated('m', 'resp_fixed', c => chunks.push(c));
+    async function* stream() {
+      yield { type: 'text-start', id: 't' };
+      yield { type: 'text-delta', id: 't', text: 'x' };
+      yield { type: 'text-end', id: 't' };
+      yield { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 1, outputTokens: 1 } };
+    }
+    await writeResponsesStream(stream() as never, 'm', c => chunks.push(c), undefined, undefined, { responseId: 'resp_fixed', skipCreated: true });
+    const events = parseSseEvents(chunks.join(''));
+    expect(events.filter(e => e.event === 'response.created')).toHaveLength(1);
+    expect(events.find(e => e.event === 'response.created')!.data.response.id).toBe('resp_fixed');
+    expect(events.find(e => e.event === 'response.completed')!.data.response.id).toBe('resp_fixed');
+  });
+});

@@ -1170,3 +1170,29 @@ describe('Google thinkingLevel xhigh workaround', () => {
   });
 });
 
+
+describe('withAnthropicThinkingDisplay (#93)', () => {
+  it('requests summarized thinking on first-party Claude routes only', async () => {
+    const { withAnthropicThinkingDisplay } = await import('../src/provider-factory.js');
+    const vertex = withAnthropicThinkingDisplay({ anthropic: { effort: 'high', thinking: { type: 'adaptive' } } },
+      { npm: '@ai-sdk/google-vertex/anthropic', providerId: 'vertex-anthropic', modelId: 'vertex-anthropic__claude-opus-5-5', upstreamModelId: 'claude-opus-5-5' });
+    expect(vertex).toEqual({ anthropic: { effort: 'high', thinking: { type: 'adaptive', display: 'summarized' } } });
+    expect(withAnthropicThinkingDisplay(undefined, { npm: '@ai-sdk/anthropic', providerId: 'anthropic', modelId: 'claude-opus-5-5' }))
+      .toEqual({ anthropic: { thinking: { type: 'adaptive', display: 'summarized' } } });
+    expect(withAnthropicThinkingDisplay(undefined, { npm: '@ai-sdk/anthropic', providerId: 'claude-code-2', modelId: 'claude-sonnet-5' }))
+      .toEqual({ anthropic: { thinking: { type: 'adaptive', display: 'summarized' } } });
+    const gw = { anthropic: { effort: 'high', thinking: { type: 'adaptive' } } };
+    for (const providerId of ['zen', 'commandcode', 'custom-anthropic-1', 'openrouter']) {
+      expect(withAnthropicThinkingDisplay(gw, { npm: '@ai-sdk/anthropic', providerId, modelId: 'claude-opus-5-5' })).toBe(gw);
+    }
+    expect(withAnthropicThinkingDisplay(gw, { npm: '@ai-sdk/anthropic', providerId: 'anthropic', modelId: 'claude-sonnet-4-5-20250929' })).toBe(gw);
+  });
+});
+
+describe('withAnthropicThinkingDisplay prefixed route ids', () => {
+  it('strips a provider__ prefix when no upstream model id is set', async () => {
+    const { withAnthropicThinkingDisplay } = await import('../src/provider-factory.js');
+    expect(withAnthropicThinkingDisplay(undefined, { npm: '@ai-sdk/google-vertex/anthropic', providerId: 'vertex-anthropic', modelId: 'vertex-anthropic__claude-opus-5-5' }))
+      .toEqual({ anthropic: { thinking: { type: 'adaptive', display: 'summarized' } } });
+  });
+});

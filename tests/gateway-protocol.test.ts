@@ -124,3 +124,13 @@ describe('learned protocol cache', () => {
     clearRememberedProtocols();
   });
 });
+
+describe('overflow is never a protocol problem', () => {
+  it('does not retry prompt-too-long on the other protocol', async () => {
+    const { classifyProtocolFailure } = await import('../src/gateway-protocol.js');
+    for (const message of ['messages: prompt is too long: 1207698 tokens > 1000000 maximum', 'input is too long', 'messages.20.content.2.image.source.base64: image exceeds 10 MB maximum']) {
+      const err = Object.assign(new Error(message), { statusCode: 400 });
+      expect(classifyProtocolFailure(err).retryable).toBe(false);
+    }
+  });
+});

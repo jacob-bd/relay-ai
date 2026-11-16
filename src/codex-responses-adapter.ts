@@ -1,3 +1,4 @@
+import { parseContextOverflow } from './codex-context-budget.js';
 import { streamActivity } from './stream-activity.js';
 // OpenAI Responses API (/v1/responses) ↔ Vercel AI SDK. One turn per request; Codex owns the tool loop.
 import { isProviderKind } from './registry/provider-kind.js';
@@ -304,7 +305,7 @@ function flattenNamespaceTools(ns: ResponsesNamespaceTool): Array<ResponsesFunct
  * The Vercel AI SDK / Responses translation only reads `tools`, so lift them there
  * before the rest of translation runs, or the model never sees them.
  */
-function liftAdditionalToolsInput(
+export function liftAdditionalToolsInput(
   input: ResponsesInputItem[],
   tools: ResponsesTool[],
 ): { input: ResponsesInputItem[]; tools: ResponsesTool[] } {
@@ -771,7 +772,7 @@ function translateResponsesToolChoice(
   return undefined;
 }
 
-function newResponseId(): string {
+export function newResponseId(): string {
   return `resp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
@@ -789,6 +790,34 @@ interface ResponsesUsage {
   total_tokens: number;
   /** OpenAI Responses shape; lets Codex and traces show prompt-cache hits. */
   input_tokens_details?: { cached_tokens: number };
+}
+
+/** Token usage for relay logs and context calibration (#92). `inputTokens` includes cached tokens. */
+export interface RelayUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+type SdkUsageLike = {
+  inputTokens?: number;
+  outputTokens?: number;
+  inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
+} | undefined;
+
+function relayUsageFrom(u: SdkUsageLike): RelayUsage {
+  return {
+    inputTokens: u?.inputTokens ?? 0,
+    outputTokens: u?.outputTokens ?? 0,
+    cacheReadTokens: u?.inputTokenDetails?.cacheReadTokens ?? 0,
+    cacheWriteTokens: u?.inputTokenDetails?.cacheWriteTokens ?? 0,
+  };
+}
+
+/** Log suffix shared by the HTTP and WS relay paths. */
+export function formatRelayUsage(u: RelayUsage | undefined): string {
+  return u ? ` usage=in:${u.inputTokens} out:${u.outputTokens} cacheRead:${u.cacheReadTokens} cacheWrite:${u.cacheWriteTokens}` : '';
 }
 
 function usageFromPart(part: FullStreamPart): ResponsesUsage {
@@ -920,8 +949,12 @@ export interface ResponsesStreamSummary {
   errorMessage?: string;
   /** Upstream HTTP status from that error part, when the SDK error carries one. */
   errorStatus?: number;
+  /** Set when the error was a provider "prompt too long" refusal (#95). */
+  contextOverflow?: { actualTokens?: number; maxTokens?: number };
   finishReason?: string;
   incompleteReason?: 'max_output_tokens' | 'content_filter';
+  /** Provider usage from the finish part, when the provider reported one. */
+  usage?: RelayUsage;
 }
 
 function incompleteReasonForFinish(finishReason?: string): ResponsesStreamSummary['incompleteReason'] {
@@ -985,6 +1018,18 @@ export interface WriteResponsesStreamOptions {
   toolContext?: CodexToolContext;
   /** Names the real route in terminal error lines; defaults to the requested model id. */
   logLabel?: string;
+  /** Caller-owned response id, so a retried attempt keeps the id Codex already saw. */
+  responseId?: string;
+  /** The caller already emitted response.created (see writeResponsesCreated). */
+  skipCreated?: boolean;
+}
+
+/** Emits response.created up front so Codex sees a first frame before any slow pre-work. */
+export function writeResponsesCreated(modelId: string, responseId: string, write: WriteFn): void {
+  write(sseChunk('response.created', {
+    type: 'response.created',
+    response: { id: responseId, object: 'response', model: modelId, created_at: Math.floor(Date.now() / 1000), status: 'in_progress', output: [] },
+  }));
 }
 
 export async function writeResponsesStream(
@@ -996,11 +1041,12 @@ export async function writeResponsesStream(
   options?: WriteResponsesStreamOptions,
 ): Promise<void> {
   const emit = (type: string, data: unknown) => write(sseChunk(type, data));
-  const responseId = newResponseId();
+  const responseId = options?.responseId ?? newResponseId();
   const createdAt = Math.floor(Date.now() / 1000);
   let usage: ResponsesUsage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+  let relayUsage: RelayUsage | undefined;
 
-  emit('response.created', {
+  if (!options?.skipCreated) emit('response.created', {
     type: 'response.created',
     response: {
       id: responseId,
@@ -1022,14 +1068,64 @@ export async function writeResponsesStream(
   const streamStartedAt = Date.now();
   let lastProgressAt = streamStartedAt;
   const recentPartCounts = new Map<string, number>();
+  // reasoningText accumulates every reasoning block (stats, loop detection);
+  // the open block streams its own summary text live (#93).
   let reasoningItemId: string | null = null;
   let reasoningText = '';
+  let reasoningBlockText = '';
   let reasoningOutputIndex = 0;
+  const reasoningItems: ResponsesReasoningItem[] = [];
   const outputItems: unknown[] = [];
   let reasoningRepeat = INITIAL_REPEAT_TRACKER;
   let textRepeat = INITIAL_REPEAT_TRACKER;
   let loopDetected: 'reasoning' | 'text' | undefined;
   let finishReason: string | undefined;
+
+  const openReasoningBlock = () => {
+    reasoningItemId = newItemId('rs');
+    reasoningOutputIndex = outputIndex++;
+    reasoningBlockText = '';
+    emit('response.output_item.added', {
+      type: 'response.output_item.added',
+      output_index: reasoningOutputIndex,
+      item: { id: reasoningItemId, type: 'reasoning', summary: [] },
+    });
+    emit('response.reasoning_summary_part.added', {
+      type: 'response.reasoning_summary_part.added',
+      item_id: reasoningItemId,
+      output_index: reasoningOutputIndex,
+      summary_index: 0,
+      part: { type: 'summary_text', text: '' },
+    });
+  };
+
+  const closeReasoningBlock = () => {
+    if (!reasoningItemId) return;
+    const id = reasoningItemId;
+    emit('response.reasoning_summary_text.done', {
+      type: 'response.reasoning_summary_text.done',
+      item_id: id,
+      output_index: reasoningOutputIndex,
+      summary_index: 0,
+      text: reasoningBlockText,
+    });
+    emit('response.reasoning_summary_part.done', {
+      type: 'response.reasoning_summary_part.done',
+      item_id: id,
+      output_index: reasoningOutputIndex,
+      summary_index: 0,
+      part: { type: 'summary_text', text: reasoningBlockText },
+    });
+    const item = makeReasoningOutputItem(id, reasoningBlockText);
+    emit('response.output_item.done', {
+      type: 'response.output_item.done',
+      output_index: reasoningOutputIndex,
+      item,
+    });
+    reasoningItems.push(item);
+    reasoningItemId = null;
+    reasoningBlockText = '';
+  };
 
   const ensureTextItem = (): string => {
     if (!textItemId) {
@@ -1112,30 +1208,29 @@ export async function writeResponsesStream(
     recentPartCounts.set(part.type, (recentPartCounts.get(part.type) ?? 0) + 1);
     switch (part.type) {
       case 'reasoning-start':
-        reasoningText = '';
-        reasoningItemId = newItemId('rs');
-        reasoningOutputIndex = outputIndex++;
-        emit('response.output_item.added', {
-          type: 'response.output_item.added',
-          output_index: reasoningOutputIndex,
-          item: { id: reasoningItemId, type: 'reasoning', summary: [] },
-        });
+        closeReasoningBlock();
+        openReasoningBlock();
         break;
 
-      case 'reasoning-delta':
-        if (!reasoningItemId) {
-          reasoningItemId = newItemId('rs');
-          reasoningOutputIndex = outputIndex++;
-          emit('response.output_item.added', {
-            type: 'response.output_item.added',
+      case 'reasoning-delta': {
+        if (!reasoningItemId) openReasoningBlock();
+        const delta = part.text ?? '';
+        reasoningText += delta;
+        reasoningBlockText += delta;
+        if (delta) {
+          emit('response.reasoning_summary_text.delta', {
+            type: 'response.reasoning_summary_text.delta',
+            item_id: reasoningItemId,
             output_index: reasoningOutputIndex,
-            item: { id: reasoningItemId, type: 'reasoning', summary: [] },
+            summary_index: 0,
+            delta,
           });
         }
-        reasoningText += part.text ?? '';
         break;
+      }
 
       case 'reasoning-end':
+        closeReasoningBlock();
         break;
 
       case 'text-start':
@@ -1183,7 +1278,10 @@ export async function writeResponsesStream(
         break;
       case 'finish':
         if (part.finishReason) finishReason = part.finishReason;
-        if (part.totalUsage) usage = usageFromPart(part);
+        if (part.totalUsage) {
+          usage = usageFromPart(part);
+          relayUsage = relayUsageFrom(part.totalUsage as SdkUsageLike);
+        }
         break;
 
       case 'abort': {
@@ -1218,6 +1316,7 @@ export async function writeResponsesStream(
 
       case 'error': {
         const msg = formatUpstreamError(part.error);
+        const overflow = parseContextOverflow(msg);
         const is429 = msg.includes('429') ||
           (part.error && typeof part.error === 'object' &&
             ((part.error as { statusCode?: number }).statusCode === 429 ||
@@ -1232,6 +1331,7 @@ export async function writeResponsesStream(
           loopDetected,
           errorMessage: msg,
           errorStatus: (part.error as { statusCode?: number } | undefined)?.statusCode,
+          ...(overflow ? { contextOverflow: overflow } : {}),
         });
         emit('response.failed', {
           type: 'response.failed',
@@ -1242,7 +1342,7 @@ export async function writeResponsesStream(
             created_at: createdAt,
             status: 'failed',
             output: [],
-            error: { message: msg, type: is429 ? 'rate_limit_error' : 'api_error', ...(is429 ? { code: '429' } : {}) },
+            error: overflowError(msg) ?? { message: msg, type: is429 ? 'rate_limit_error' : 'api_error', ...(is429 ? { code: '429' } : {}) },
           },
         });
         return;
@@ -1378,15 +1478,8 @@ export async function writeResponsesStream(
     outputItems.push(textItem);
   }
 
-  if (reasoningItemId) {
-    const reasoningItem = makeReasoningOutputItem(reasoningItemId, reasoningText);
-    emit('response.output_item.done', {
-      type: 'response.output_item.done',
-      output_index: reasoningOutputIndex,
-      item: reasoningItem,
-    });
-    outputItems.unshift(reasoningItem);
-  }
+  closeReasoningBlock();
+  outputItems.unshift(...reasoningItems);
 
   // Codex executes output_item.done calls before the terminal response event.
   // Never commit a tool batch from an incomplete generation: partial custom
@@ -1422,6 +1515,7 @@ export async function writeResponsesStream(
     dsmlToolCallsRecovered: dsml?.calls.length,
     finishReason,
     incompleteReason,
+    ...(relayUsage ? { usage: relayUsage } : {}),
   });
 
   const terminalEvent = incompleteReason ? 'response.incomplete' : 'response.completed';
@@ -1447,6 +1541,8 @@ export interface StreamResponsesOptions {
   idleTimeoutMs?: number;
   progressTimeoutMs?: number;
   logLabel?: string;
+  responseId?: string;
+  skipCreated?: boolean;
 }
 
 export async function streamResponsesResponse(
@@ -1517,6 +1613,8 @@ export async function streamResponsesResponse(
         onForceStop: reason => abort.abort(new Error(reason)),
         toolContext,
         logLabel: options?.logLabel,
+        responseId: options?.responseId,
+        skipCreated: options?.skipCreated,
       });
     } finally {
       active = false;
@@ -1530,6 +1628,7 @@ export async function generateResponsesResponse(
   model: LanguageModel,
   params: CodexSdkCallParams,
   modelId: string,
+  onUsage?: (usage: RelayUsage) => void,
 ): Promise<Record<string, unknown>> {
   const { toolContext, ...sdkParams } = params;
   const r = await generateTextStreamingIfRequired({ model, ...sdkParams, maxRetries: 0 } as Parameters<typeof generateText>[0]);
@@ -1571,6 +1670,7 @@ export async function generateResponsesResponse(
 
   const inputTokens = r.usage?.inputTokens ?? 0;
   const outputTokens = r.usage?.outputTokens ?? 0;
+  if (r.usage) onUsage?.(relayUsageFrom(r.usage as SdkUsageLike));
 
   return {
     id: responseId,
@@ -1621,8 +1721,9 @@ export function decodeCompactionContent(encrypted: string | undefined): string |
   }
 }
 
-function makeCompactionItem(summary: string): Record<string, unknown> {
-  return { type: 'compaction', id: newItemId('cmp'), encrypted_content: encodeCompactionContent(summary) };
+/** A fixed `id` keeps the item byte-identical across turns (prompt-cache stable). */
+export function makeCompactionItem(summary: string, id: string = newItemId('cmp')): Record<string, unknown> {
+  return { type: 'compaction', id, encrypted_content: encodeCompactionContent(summary) };
 }
 
 /** Append the summarization instruction as a final user turn so the model produces a summary. */
@@ -1667,6 +1768,42 @@ async function collectCompactionSummary(model: LanguageModel, params: CodexSdkCa
   // placeholder summary: it would replace the thread's history with nothing.
   if (firstStreamError) throw firstStreamError.error;
   return text;
+}
+
+/**
+ * Relay auto-summary call (#94/#95): streaming (ChatGPT-login rejects non-stream),
+ * aborted by the caller's signal or after 120 s without data, and an empty
+ * result is an error — an empty summary would silently erase history.
+ */
+export async function collectSummaryText(model: LanguageModel, params: CodexSdkCallParams, signal?: AbortSignal): Promise<string> {
+  const idle = new AbortController();
+  let timer = setTimeout(() => idle.abort(new Error('summary: no data from provider for 120s')), STREAM_IDLE_TIMEOUT_MS);
+  const abortSignal = signal ? AbortSignal.any([signal, idle.signal]) : idle.signal;
+  const { toolContext: _toolContext, ...sdkParams } = params;
+  void _toolContext;
+  let firstStreamError: unknown;
+  try {
+    const result = streamText({
+      model,
+      ...sdkParams,
+      maxRetries: 0,
+      abortSignal,
+      onError: event => { firstStreamError ??= event.error; },
+    } as Parameters<typeof streamText>[0]);
+    Promise.resolve(result.toolResults).catch(() => {});
+    let text = '';
+    for await (const delta of result.textStream) {
+      text += delta;
+      clearTimeout(timer);
+      timer = setTimeout(() => idle.abort(new Error('summary: no data from provider for 120s')), STREAM_IDLE_TIMEOUT_MS);
+    }
+    if (firstStreamError) throw firstStreamError;
+    if (abortSignal.aborted) throw abortSignal.reason;
+    if (!text.trim()) throw new Error('summary: provider returned an empty summary');
+    return text;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** The full non-streaming Responses body for a v2 compaction turn: exactly one compaction item. */
@@ -1731,8 +1868,15 @@ export function responsesErrorBody(
     created_at: Math.floor(Date.now() / 1000),
     status: 'failed',
     output: [],
-    error: { message, type: statusCode === 429 ? 'rate_limit_error' : 'api_error', code: String(statusCode) },
+    error: overflowError(message) ?? { message, type: statusCode === 429 ? 'rate_limit_error' : 'api_error', code: String(statusCode) },
   };
+}
+
+/** Codex treats `context_length_exceeded` as non-retryable; a bare api_error made it retry 5x (#95). */
+export function overflowError(message: string): { message: string; type: string; code: string } | undefined {
+  return parseContextOverflow(message)
+    ? { message, type: 'invalid_request_error', code: 'context_length_exceeded' }
+    : undefined;
 }
 
 export function writeResponsesErrorStream(modelId: string, message: string, write: WriteFn, statusCode = 401): void {

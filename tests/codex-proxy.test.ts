@@ -1643,3 +1643,63 @@ describe('buildCatalogFile', () => {
     expect(catalog.models[1]!.priority).toBe(1);
   });
 });
+
+describe('estimateCodexRequestChars counts tools and discounts nested images (#95)', () => {
+  it('includes tool definitions', async () => {
+    const { estimateCodexRequestChars: est } = await import('../src/codex-proxy.js');
+    const params = { messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], tools: { big: { description: 'd'.repeat(20_000) } } };
+    expect(est(params as never)).toBeGreaterThanOrEqual(20_000);
+  });
+  it('weights images inside tool results as one image', async () => {
+    const { estimateCodexRequestChars: est } = await import('../src/codex-proxy.js');
+    const params = { messages: [{ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c', toolName: 't', output: { type: 'content', value: [{ type: 'image-data', data: 'A'.repeat(2_000_000), mediaType: 'image/png' }] } }] }] };
+    expect(est(params as never)).toBeLessThan(10_000);
+  });
+  it('compaction trimming ignores the tools it strips', async () => {
+    const { protectCodexCompactionParams: protect } = await import('../src/codex-proxy.js');
+    const body = { input: [{ role: 'user', content: [{ type: 'input_text', text: 'You are performing a CONTEXT CHECKPOINT COMPACTION. Summarize.' }] }] };
+    const params = { messages: Array.from({ length: 10 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: [{ type: 'text', text: `m${i} ${'w'.repeat(10_000)}` }] })), tools: { huge: { description: 'z'.repeat(200_000) } } };
+    const out = protect(body, params as never, 100_000);
+    expect(out.messages).toHaveLength(10);
+    expect(out.tools).toBeUndefined();
+  });
+});
+
+describe('Codex WS request size cap', () => {
+  let h: Awaited<ReturnType<typeof startCodexProxy>> | null = null;
+  afterEach(() => { h?.close(); h = null; });
+
+  function firstSignal(client: WebSocket): Promise<{ kind: 'message' | 'close'; code?: number }> {
+    return new Promise(resolve => {
+      client.once('message', () => resolve({ kind: 'message' }));
+      client.once('close', code => resolve({ kind: 'close', code }));
+    });
+  }
+
+  it('accepts a 6 MB history frame', async () => {
+    h = await startCodexProxy([{ modelId: 'm', npm: '@ai-sdk/anthropic', apiKey: 'sk-test', upstreamModelId: 'claude-sonnet-4-6' }], { requireAuth: false });
+    const client = new WebSocket(`ws://127.0.0.1:${h.port}/v1/responses`);
+    await new Promise(r => client.once('open', r));
+    const signal = firstSignal(client);
+    client.send(JSON.stringify({ type: 'response.create', model: 'm', input: [{ role: 'user', content: [{ type: 'input_text', text: 'x'.repeat(6 * 1024 * 1024) }] }] }));
+    const got = await signal;
+    expect(got.kind).toBe('message');
+    client.terminate();
+  }, 20_000);
+
+  it('closes with 1009 when fragments exceed the cap', async () => {
+    h = await startCodexProxy([{ modelId: 'm', npm: '@ai-sdk/anthropic', apiKey: 'sk-test', upstreamModelId: 'claude-sonnet-4-6' }], { requireAuth: false });
+    const client = new WebSocket(`ws://127.0.0.1:${h.port}/v1/responses`);
+    await new Promise(r => client.once('open', r));
+    const signal = firstSignal(client);
+    const chunk = Buffer.alloc(12 * 1024 * 1024, 0x61);
+    client.send(chunk, { binary: false, fin: false });
+    client.send(chunk, { binary: false, fin: false });
+    client.send(chunk, { binary: false, fin: false });
+    client.send(Buffer.from('}'), { binary: false, fin: true });
+    const got = await signal;
+    // The server sends 1009; a client still mid-send observes the abrupt end as 1006.
+    expect(got.kind).toBe('close');
+    expect([1009, 1006]).toContain(got.code);
+  }, 20_000);
+});
