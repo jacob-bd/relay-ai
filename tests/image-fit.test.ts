@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import sharp from 'sharp';
-import { fitImagesInInput, imagePolicyForRoute, __resetImageFitForTests, type ImageFitPolicy } from '../src/image-fit.js';
+import { fitImagesInInput, imagePolicyForRoute, reactiveImagePolicyForRoute, GENERIC_IMAGE_POLICY, GENERIC_REACTIVE_IMAGE_POLICY, REACTIVE_IMAGE_POLICY, __resetImageFitForTests, type ImageFitPolicy } from '../src/image-fit.js';
 import { parseImageTooLarge } from '../src/codex-context-budget.js';
 
 const CAP = 10_485_760 - 64 * 1024;
@@ -77,11 +77,17 @@ describe('fitImagesInInput', () => {
 });
 
 describe('imagePolicyForRoute', () => {
-  it('uses 2576 for new Claude models, 1568 for older, none for non-Anthropic', () => {
+  it('uses 2576 for new Claude models, 1568 for older, the generic policy for everything else', () => {
     expect(imagePolicyForRoute({ npm: '@ai-sdk/google-vertex/anthropic', modelId: 'vertex-anthropic__claude-opus-5-5' })).toEqual({ maxLongEdge: 2576, maxBase64Bytes: CAP });
     expect(imagePolicyForRoute({ npm: '@ai-sdk/anthropic', modelId: 'claude-sonnet-4-6' })?.maxLongEdge).toBe(1568);
     expect(imagePolicyForRoute({ npm: '@ai-sdk/anthropic', modelId: 'claude-sonnet-5' })?.maxLongEdge).toBe(2576);
-    expect(imagePolicyForRoute({ npm: '@ai-sdk/openai', modelId: 'gpt-6.1-sol' })).toBeUndefined();
+    expect(imagePolicyForRoute({ npm: '@ai-sdk/openai', modelId: 'gpt-6.1-sol' })).toBe(GENERIC_IMAGE_POLICY);
+    expect(imagePolicyForRoute({ npm: '@ai-sdk/openai-compatible', modelId: 'custom-x__Qwen3.8-27B-FP8' })).toBe(GENERIC_IMAGE_POLICY);
+  });
+
+  it('picks the reactive (retry) policy per route kind', () => {
+    expect(reactiveImagePolicyForRoute({ npm: '@ai-sdk/anthropic', modelId: 'claude-opus-5-5' })).toBe(REACTIVE_IMAGE_POLICY);
+    expect(reactiveImagePolicyForRoute({ npm: '@ai-sdk/openai-compatible', modelId: 'qwen3.8' })).toBe(GENERIC_REACTIVE_IMAGE_POLICY);
   });
 });
 
@@ -90,6 +96,13 @@ describe('parseImageTooLarge', () => {
     expect(parseImageTooLarge('messages.20.content.2.image.source.base64: image exceeds 10 MB maximum: 11052444 bytes > 10485760 bytes')).toBe(true);
     expect(parseImageTooLarge('image dimensions exceed max allowed size: 8000 pixels')).toBe(true);
     expect(parseImageTooLarge('prompt is too long')).toBe(false);
+  });
+
+  it('recognises request-size refusals from gateways', () => {
+    expect(parseImageTooLarge('Invalid JSON body (HTTP 400)')).toBe(true);
+    expect(parseImageTooLarge('Request Entity Too Large (HTTP 413)')).toBe(true);
+    expect(parseImageTooLarge('Payload Too Large')).toBe(true);
+    expect(parseImageTooLarge('Bad Request (HTTP 400)')).toBe(false);
   });
 });
 
@@ -104,4 +117,60 @@ describe('review fix: dimension refusals', () => {
     const untouched = await fitImagesInInput([userImage(tiny)] as never, policy);
     expect(untouched.resized).toBe(0);
   }, 60_000);
+});
+
+describe('generic (non-Claude) policy and whole-request cap', () => {
+  const KB = 1024;
+  const MB = 1024 * KB;
+  const two = () => [userImage(wide), userImage(bigNoisy)];
+  const images = (input: unknown[]) => input.map(i => (i as { content: Array<{ type: string; image_url?: string }> }).content[1]!);
+
+  it('keeps two big screenshots as images, each and together under the caps', async () => {
+    const { input, resized, omitted } = await fitImagesInInput(two() as never, GENERIC_IMAGE_POLICY);
+    expect(resized).toBe(2);
+    expect(omitted).toBe(0);
+    const urls = images(input).map(p => p.image_url!);
+    for (const u of urls) {
+      expect(b64len(u)).toBeLessThanOrEqual(3 * MB);
+      const meta = await sharp(Buffer.from(u.split(',')[1]!, 'base64')).metadata();
+      expect(Math.max(meta.width!, meta.height!)).toBeLessThanOrEqual(2048);
+    }
+    expect(urls.reduce((n, u) => n + b64len(u), 0)).toBeLessThanOrEqual(7 * MB);
+  }, 60_000);
+
+  it('splits the whole-request cap evenly when the per-image pass is not enough', async () => {
+    const tight: ImageFitPolicy = { maxLongEdge: 2048, maxBase64Bytes: 3 * MB, maxTotalBase64Bytes: 1 * MB, soft: true };
+    const { input, resized, omitted } = await fitImagesInInput(two() as never, tight);
+    expect(omitted).toBe(0);
+    expect(resized).toBe(2);
+    const urls = images(input).map(p => p.image_url!);
+    for (const u of urls) expect(b64len(u)).toBeLessThanOrEqual(512 * KB);
+    const again = await fitImagesInInput(two() as never, tight);
+    expect(images(again.input).map(p => p.image_url)).toEqual(urls);
+  }, 60_000);
+
+  it('turns the oldest images into notes as a last resort', async () => {
+    // Measure what each image shrinks to at the 256 KB floor share, then cap the
+    // request just above the newest one so exactly the oldest has to go.
+    const floor = await fitImagesInInput(two() as never, { maxLongEdge: 2048, maxBase64Bytes: 256 * KB });
+    const [s1, s2] = images(floor.input).map(p => b64len(p.image_url!));
+    expect(s1! + s2!).toBeGreaterThan(s2! + 1);
+    const tiny: ImageFitPolicy = { maxLongEdge: 2048, maxBase64Bytes: 3 * MB, maxTotalBase64Bytes: s2! + 1, soft: true };
+    const { input, resized, omitted } = await fitImagesInInput(two() as never, tiny);
+    expect(omitted).toBe(1);
+    expect(resized).toBe(1);
+    const [oldest, newest] = images(input);
+    expect(oldest).toEqual({ type: 'input_text', text: "[image omitted: 4000x1000 image exceeds this model's size limit]" });
+    expect(newest!.type).toBe('input_image');
+    expect(b64len(newest!.image_url!)).toBeLessThanOrEqual(256 * KB);
+  }, 60_000);
+
+  it('leaves images untouched without the image library (the generic limit is a guess)', async () => {
+    process.env.RELAY_AI_DISABLE_SHARP = '1';
+    const items = two();
+    const { input, resized, omitted } = await fitImagesInInput(items as never, GENERIC_IMAGE_POLICY);
+    expect(resized).toBe(0);
+    expect(omitted).toBe(0);
+    expect(input).toBe(items);
+  });
 });

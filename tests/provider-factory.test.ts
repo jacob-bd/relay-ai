@@ -245,6 +245,34 @@ describe('getReasoningCapabilities', () => {
       .toEqual({ go: { reasoningEffort: 'max' } });
   });
 
+  it('offers none/low/medium/high for undeclared Qwen3+ thinking models on OpenAI-compatible routes', () => {
+    const md = { providerId: 'custom-vllm' };
+    const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'Qwen3.8-27B-FP8', md);
+    expect(caps.levels).toEqual(['none', 'low', 'medium', 'high']);
+    expect(caps.defaultLevel).toBe('high');
+    expect(caps.mode).toBe('controllable');
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'none', 'Qwen3.8-27B-FP8', md))
+      .toEqual({ customVllm: { reasoningEffort: 'none' } });
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'off', 'Qwen3.8-27B-FP8', md))
+      .toEqual({ customVllm: { reasoningEffort: 'none' } });
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'high', 'qwen/qwen3.5-122b', md))
+      .toEqual({ customVllm: { reasoningEffort: 'high' } });
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'xhigh', 'Qwen3.8-27B-FP8', md)).toBeUndefined();
+  });
+
+  it('leaves non-thinking, older, non-chat and declared Qwen ids alone', () => {
+    const md = { providerId: 'custom-vllm' };
+    for (const id of ['qwen3-coder-480b', 'Qwen3-235B-A22B-Instruct-2507', 'Qwen3-Reranker-4B', 'qwen3-embedding-8b', 'qwen2.5-72b-instruct', 'qwq-32b']) {
+      expect(getReasoningCapabilities('@ai-sdk/openai-compatible', id, md).levels, id).toEqual([]);
+    }
+    expect(getReasoningCapabilities('@ai-sdk/openai-compatible', 'qwen3.8-27b', { ...md, reasoning: false }).levels).toEqual([]);
+    // models.dev declarations win over the generic Qwen rule.
+    expect(getReasoningCapabilities('@ai-sdk/openai-compatible', 'qwen3.8-27b', { ...md, reasoningEffortLevels: ['low', 'high'] }).levels)
+      .toEqual(['low', 'high']);
+    // Other SDK packages are untouched.
+    expect(getReasoningCapabilities('@ai-sdk/openai', 'qwen3.8-27b', md).levels).toEqual([]);
+  });
+
   it('keeps GLM-5.2 limited to its documented efforts', () => {
     const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'glm-5.2', { providerId: 'go' });
     expect(caps.levels).toEqual(['high', 'xhigh']);

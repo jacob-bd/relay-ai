@@ -467,6 +467,26 @@ Common errors:
   404 unknown model (Codex favs)   ensure zen/go routes — use --provider zen explicitly
   DeepSeek tool loop 400           update relay-ai — reasoning round-trip in Codex proxy
   Codex shell network blocked      default is danger-full-access; check relay-ai codex --config
+  "prompt is too long" (Codex)     relay auto-summarizes and retries once; see CODEX CONTEXT MANAGEMENT
+  "image exceeds 10 MB maximum"    relay shrinks oversized images (optional sharp); update relay-ai
+  "Invalid JSON body" with images  gateway body-size cap; relay shrinks images and retries once
+  "not a multimodal model"         text-only model; relay removes images and retries once
+
+CODEX CONTEXT MANAGEMENT (relay routes in codex / codex-app)
+  • Auto-summarize: at ~85% of the model window, or after a model-vendor switch
+    (e.g. GPT -> Claude) with history above 50%, relay summarizes the oldest
+    history with the same model, keeps recent turns, tool-call pairs, AGENTS.md /
+    environment context, and history-only tool definitions. The summary is reused
+    byte-for-byte on later turns (prompt cache stays warm).
+  • Switch: RELAY_AI_AUTO_SUMMARIZE=off|overflow|all (default all).
+  • Provider "prompt too long" -> one summarize-and-retry, then Codex receives
+    context_length_exceeded (no 5x retry loop).
+  • Images over Claude's 10 MB base64 cap are shrunk (long edge 2576/1568 px);
+    without the optional sharp package they become a short text note.
+  • Other models: images over 3 MB shrink to 2048 px, all images in one request
+    stay under 7 MB; "Invalid JSON body" / 413 / "too large" -> one smaller retry.
+  • Live Claude thinking streams into the app on anthropic / claude-code /
+    vertex-anthropic routes; --trace logs usage=in out cacheRead cacheWrite.
 
 Human-readable guide: docs/AI-AGENTS.md in the relay-ai repo.
 

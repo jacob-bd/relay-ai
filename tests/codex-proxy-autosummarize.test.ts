@@ -4,7 +4,7 @@ import { simulateReadableStream } from 'ai';
 import type { LanguageModelV4StreamPart } from '@ai-sdk/provider';
 import { WebSocket } from 'ws';
 import { createLanguageModel } from '../src/provider-factory.js';
-import { startCodexProxy, type CodexProxyHandle } from '../src/codex-proxy.js';
+import { __resetTextOnlyModelsForTests, startCodexProxy, type CodexProxyHandle } from '../src/codex-proxy.js';
 import { COMPACTION_SUMMARY_INSTRUCTION } from '../src/codex-responses-adapter.js';
 import { __resetContextBudgetForTests, noteModelFamily } from '../src/codex-context-budget.js';
 import { __resetAutoSummarizeForTests } from '../src/codex-auto-summarize.js';
@@ -246,6 +246,34 @@ describe('oversized images (Task 9)', () => {
     expect(events.filter(e => e.event === 'response.completed')).toHaveLength(1);
     expect(textOf(rec[1]!).length).toBeLessThan(textOf(rec[0]!).length);
   }, 60_000);
+
+  it('streams: a text-only model refusal retries once with images removed', async () => {
+    __resetTextOnlyModelsForTests();
+    const rec: Prompt[] = [];
+    const model = new MockLanguageModelV4({
+      doStream: async (opts: { prompt: Prompt }) => {
+        rec.push(opts.prompt);
+        if (JSON.stringify(opts.prompt).includes('"image') || JSON.stringify(opts.prompt).includes('"file"')) {
+          throw Object.assign(new Error('Bad Request'), { statusCode: 400, responseBody: '{"errors":[{"message":"zai-org/GLM-5.3 is not a multimodal model"}]}' });
+        }
+        return { stream: textStream('ok') };
+      },
+    } as never);
+    vi.mocked(createLanguageModel).mockResolvedValue(model as never);
+    handle = await startCodexProxy([{ modelId: 'other__glm', npm: '@ai-sdk/openai-compatible', apiKey: 'x', upstreamModelId: 'glm-5-3', providerId: 'custom-openai-1', baseURL: 'http://127.0.0.1:1/v1' } as never], { requireAuth: false });
+    const small = [env, { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'see this' }, { type: 'input_image', image_url: 'data:image/png;base64,iVBORw0KGgo=' }] }];
+    const res = await fetch(`http://127.0.0.1:${handle.port}/v1/responses`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', session_id: 'txt' },
+      body: JSON.stringify({ model: 'other__glm', input: small, stream: true }),
+    });
+    const events = parseSse(await res.text());
+    expect(rec).toHaveLength(2);
+    expect(events.filter(e => e.event === 'response.created')).toHaveLength(1);
+    expect(events.filter(e => e.event === 'response.failed')).toHaveLength(0);
+    expect(events.filter(e => e.event === 'response.completed')).toHaveLength(1);
+    expect(JSON.stringify(rec[1])).toContain("this model can't read images");
+    __resetTextOnlyModelsForTests();
+  });
 });
 
 describe('review fixes (proxy)', () => {

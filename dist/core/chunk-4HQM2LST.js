@@ -472,7 +472,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.22.6",
+  version: "0.22.7",
   publishConfig: {
     access: "public"
   },
@@ -566,7 +566,8 @@ var package_default = {
     vitest: "^4.1.10"
   },
   optionalDependencies: {
-    "@napi-rs/keyring": "^1.3.0"
+    "@napi-rs/keyring": "^1.3.0",
+    sharp: "^0.35.5"
   },
   overrides: {
     ws: "^8.21.0"
@@ -4235,7 +4236,7 @@ function classifyProtocolFailure(error) {
   if (status === 401 || status === 403 || status === 429 || /invalid (api )?key|authentication|quota|billing|not in plan|model_not_in_plan/.test(lower)) {
     return { retryable: false, status, reason: "authentication or quota failure" };
   }
-  if (/context (length|window)|too many tokens|maximum context|invalid tool|tool schema|moderation/.test(lower)) {
+  if (/context (length|window)|too many tokens|maximum context|prompt is too long|input is too long|exceeds the maximum number of tokens|image exceeds|image too large|invalid tool|tool schema|moderation/.test(lower)) {
     return { retryable: false, status, reason: "request content was rejected" };
   }
   const explicitProtocol = status === 405 || status === 415 || status !== void 0 && [400, 404, 422].includes(status) && /endpoint|method|protocol|messages|chat\/completions|chat completions|anthropic/.test(lower);
@@ -5206,6 +5207,16 @@ var GLM_53_REASONING_ID = /^(?:[a-z0-9-]+\/)?glm-?5\.3(?:-|$)/;
 function isGlm53ReasoningModel(modelId) {
   return GLM_53_REASONING_ID.test(modelId.toLowerCase().trim());
 }
+var QWEN_REASONING_ID = /^(?:[a-z0-9-]+\/)?qwen(?:3|[4-9])(?:[.\-_]|$)/;
+var QWEN_NON_THINKING_ID = /instruct|coder|embed|rerank/;
+var QWEN_EFFORT_LEVELS = ["none", "low", "medium", "high"];
+function isQwenReasoningModel(modelId) {
+  const lower = modelId.toLowerCase().trim();
+  return QWEN_REASONING_ID.test(lower) && !QWEN_NON_THINKING_ID.test(lower);
+}
+function qwenRuleApplies(npm, modelId, metadata) {
+  return npm === "@ai-sdk/openai-compatible" && metadata?.reasoning !== false && !metadata?.reasoningEffortConflict && !(metadata?.reasoningEffortLevels && metadata.reasoningEffortLevels.length > 0) && isQwenReasoningModel(modelId);
+}
 function toCamelCase(str) {
   return str.replace(/[-_]([a-z])/g, (_, g) => g.toUpperCase());
 }
@@ -5677,6 +5688,17 @@ function resolveRawReasoningCapabilities(npm, modelId, metadata) {
       };
     }
   }
+  if (qwenRuleApplies(npm, modelId, metadata)) {
+    return {
+      levels: [...QWEN_EFFORT_LEVELS],
+      defaultLevel: "high",
+      supportsSummaries: false,
+      mode: "controllable",
+      source: "provider-rule",
+      confidence: "documented",
+      wireFormat: { kind: "openai-reasoning-effort" }
+    };
+  }
   if (hasSupportedParameter(metadata, "reasoning_effort")) {
     return {
       levels: ["low", "medium", "high", "xhigh"],
@@ -5828,6 +5850,12 @@ function effortProviderOptions(npm, effort, modelId, metadata) {
         const key = metadata?.providerId ? toCamelCase(metadata.providerId) : "openaiCompatible";
         return { [key]: { reasoningEffort: effort } };
       }
+    }
+    if (qwenRuleApplies(npm, modelId, metadata)) {
+      const reasoningEffort = effort === "off" ? "none" : effort;
+      if (!QWEN_EFFORT_LEVELS.includes(reasoningEffort)) return void 0;
+      const key = metadata?.providerId ? toCamelCase(metadata.providerId) : "openaiCompatible";
+      return { [key]: { reasoningEffort } };
     }
     if (hasSupportedParameter(metadata, "reasoning_effort")) {
       const reasoningEffort = mapCodexEffortToOpenAICompatible(effort);
@@ -6912,7 +6940,8 @@ function formatUpstreamError(err) {
   if (rec.responseBody) {
     try {
       const parsed = JSON.parse(rec.responseBody);
-      const providerMessage = parsed.error?.message ?? (typeof parsed.detail === "string" ? parsed.detail : void 0);
+      const listed = Array.isArray(parsed.errors) ? parsed.errors.find((e) => typeof e?.message === "string")?.message : void 0;
+      const providerMessage = typeof parsed.error === "string" ? parsed.error : parsed.error?.message ?? listed ?? (typeof parsed.detail === "string" ? parsed.detail : void 0);
       if (providerMessage) {
         const short = joinProviderMessage(providerMessage);
         return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
@@ -8519,7 +8548,7 @@ function wrapPoolError(error) {
 }
 var sessions = new PoolSessionRoutes();
 async function memberModel(routeId, context) {
-  const { createRelayModel: createRelayModel2 } = await import("./model-AGMH3HYP.js");
+  const { createRelayModel: createRelayModel2 } = await import("./model-THGMX2GA.js");
   return createRelayModel2(routeId, {
     sessionId: context.sessionId,
     ...context.options?.onDebug ? { onDebug: context.options.onDebug } : {},
@@ -9120,4 +9149,4 @@ export {
   loadCoreRegistry,
   listRelayModels
 };
-//# sourceMappingURL=chunk-BBCQV3SU.js.map
+//# sourceMappingURL=chunk-4HQM2LST.js.map

@@ -153,3 +153,17 @@ describe('formatUpstreamError with the ChatGPT backend error shape', () => {
     })).toBe('bad tool id (HTTP 400)');
   });
 });
+
+describe('formatUpstreamError with a plain-string error body', () => {
+  it('surfaces {"error": "..."} instead of the bare status text', () => {
+    const err = { name: 'AI_APICallError', message: 'Bad Request', statusCode: 400, responseBody: '{"error":"Invalid JSON body"}' };
+    expect(formatUpstreamError(err)).toBe('Invalid JSON body (HTTP 400)');
+  });
+});
+
+describe('formatUpstreamError with an errors[] list body', () => {
+  it('surfaces {"errors": [{"message": "..."}]}', () => {
+    const err = { message: 'Bad Request', statusCode: 400, responseBody: '{"errors":[{"id":"X","code":"invalid_request","message":"model is not a multimodal model"}],"status_code":400}' };
+    expect(formatUpstreamError(err)).toBe('model is not a multimodal model (HTTP 400)');
+  });
+});

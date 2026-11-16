@@ -126,6 +126,19 @@ export function __resetContextBudgetForTests(): void {
 }
 
 /** Recognises provider refusals for a single oversized image (bytes or pixels). */
+/**
+ * An image the provider refused, or a request body too big for its gateway — both
+ * are retried once with images shrunk. `Invalid JSON body` is what one vLLM
+ * gateway answers when a body passes its size cap (verified: 8 MB ok, 12 MB not).
+ */
+/**
+ * The model cannot read images at all (text-only), e.g. a vLLM gateway's
+ * `zai-org/GLM-5.3 is not a multimodal model`. Retried once without images.
+ */
+export function parseImageUnsupported(message: string): boolean {
+  return /not a multimodal model|does not support (?:image|vision|multimodal)|(?:image|vision) (?:input )?(?:is |are )?not supported|no endpoints found that support image input|images? (?:are|is) not supported/i.test(message);
+}
+
 export function parseImageTooLarge(message: string): boolean {
-  return /image exceeds|image too large|image dimensions exceed|image size exceeds/i.test(message);
+  return /image exceeds|image too large|image dimensions exceed|image size exceeds|request entity too large|payload too large|request too large|body too large|invalid json body|\(HTTP 413\)/i.test(message);
 }

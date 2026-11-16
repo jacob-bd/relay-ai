@@ -406,9 +406,10 @@ Codex exposes a **reasoning effort** picker when relay-ai's model catalog includ
 | `@ai-sdk/perplexity` | sonar-deep-research | per model (declared: minimal..high) | `reasoning_effort` |
 | `@openrouter/ai-sdk-provider` | models with `reasoning` in `supported_parameters` | none..xhigh (declared `max` shows as XHigh) | `providerOptions.openrouter.reasoning.effort` |
 | `@ai-sdk/openai-compatible` | OpenCode Go/Zen, Nvidia, Venice, Command Code, … | per model (declared, verbatim) | `<providerId>: { reasoningEffort }` |
+| `@ai-sdk/openai-compatible` (no declaration) | Qwen3+ thinking models on vLLM / SGLang / self-hosted gateways | none, low, medium, high (default high) | `reasoning_effort` |
 | other packages (DeepInfra, Together, Cohere, Alibaba / Qwen Cloud, …) | — | *(picker hidden until a verified wire mapping exists)* | no effort sent |
 
-**Labels:** the top rung is shown as `xhigh` wherever the wire value is `max` (the Codex app drops `max`), and as `max` where that is the model's own declared value for a first-class API. Mistral only supports on/off — relay-ai shows `high` and `none`. Gemini 2.5 uses token budgets under the hood; the picker labels are low/medium/high for UX consistency.
+**Labels:** the top rung is shown as `xhigh` wherever the wire value is `max` (the Codex app drops `max`), and as `max` where that is the model's own declared value for a first-class API. Mistral only supports on/off — relay-ai shows `high` and `none`. For Qwen3+ on self-hosted servers, `none` reliably turns thinking off; some servers treat low/medium/high as the same "thinking on". Gemini 2.5 uses token budgets under the hood; the picker labels are low/medium/high for UX consistency.
 
 **Local providers:** Same heuristics apply. Unrecognized models (e.g. Ollama `llama3:8b`) get an empty picker — best-effort, no v1 guarantee.
 
@@ -529,7 +530,11 @@ The truncation above is a last resort. Before it, relay summarizes old history i
 
 ### Oversized images
 
-Claude rejects any single image over 10 MB of base64 (`image exceeds 10 MB maximum`). Relay shrinks such images before sending — long edge 2576 px for Opus 4.7+/Sonnet 5+ (1568 px for older Claude), PNG kept when it fits, otherwise JPEG — using the optional `sharp` package. The result is identical every turn (cached by hash), so prompt caching is unaffected. If `sharp` is not installed, the image is replaced with `[image omitted: WxH image exceeds this model's size limit]` so the turn still works. Other providers get the same shrink-and-retry-once if they reject an image.
+Claude rejects any single image over 10 MB of base64 (`image exceeds 10 MB maximum`). Relay shrinks such images before sending — long edge 2576 px for Opus 4.7+/Sonnet 5+ (1568 px for older Claude), PNG kept when it fits, otherwise JPEG — using the optional `sharp` package. The result is identical every turn (cached by hash), so prompt caching is unaffected. If `sharp` is not installed, the image is replaced with `[image omitted: WxH image exceeds this model's size limit]` so the turn still works.
+
+Every other model gets a gentler, generic rule, because many OpenAI-compatible gateways cap the whole request body near 10 MB (one answers a too-big body with a misleading `Invalid JSON body`): images over 3 MB are shrunk to at most 2048 px on the long edge, and all images in one request are kept under 7 MB together — the budget is split evenly across images, and only as a last resort the oldest images become a text note. Without `sharp`, non-Claude images are left as they are. If any provider still refuses an image or the request size (`image exceeds`, `413`, `payload too large`, `Invalid JSON body`, …), relay shrinks once more (1568 px, 1.5 MB per image, 4 MB total) and retries once. With `--trace`, the debug log shows `images fitted: … resized=N omitted=M`.
+
+**Text-only models.** If a model refuses images entirely (`not a multimodal model`, `does not support image input`, …), relay retries once with each image replaced by `[image removed: this model can't read images]` and keeps removing images for that model until relay restarts, so switching an image-heavy chat to a text-only model keeps working. The terminal shows `removed N image(s) — this model can't read images`.
 
 ### Live thinking and cache usage in logs
 

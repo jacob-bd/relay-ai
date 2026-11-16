@@ -1432,6 +1432,31 @@ function isGlm53ReasoningModel(modelId: string): boolean {
   return GLM_53_REASONING_ID.test(modelId.toLowerCase().trim());
 }
 
+/**
+ * Qwen3+ hybrid-thinking models on a plain OpenAI-compatible server (vLLM,
+ * SGLang, self-hosted gateways) with no models.dev declaration. Verified live on
+ * a vLLM gateway: `reasoning_effort: "none"` turns thinking off, and
+ * low/medium/high are accepted (some servers treat all three as "thinking on").
+ * Instruct/Coder snapshots are non-thinking; embedding/reranker ids are not chat.
+ */
+const QWEN_REASONING_ID = /^(?:[a-z0-9-]+\/)?qwen(?:3|[4-9])(?:[.\-_]|$)/;
+const QWEN_NON_THINKING_ID = /instruct|coder|embed|rerank/;
+const QWEN_EFFORT_LEVELS = ['none', 'low', 'medium', 'high'] as const;
+
+function isQwenReasoningModel(modelId: string): boolean {
+  const lower = modelId.toLowerCase().trim();
+  return QWEN_REASONING_ID.test(lower) && !QWEN_NON_THINKING_ID.test(lower);
+}
+
+/** The generic Qwen rule applies only when models.dev says nothing more specific. */
+function qwenRuleApplies(npm: string, modelId: string, metadata?: ReasoningMetadata): boolean {
+  return npm === '@ai-sdk/openai-compatible'
+    && metadata?.reasoning !== false
+    && !metadata?.reasoningEffortConflict
+    && !(metadata?.reasoningEffortLevels && metadata.reasoningEffortLevels.length > 0)
+    && isQwenReasoningModel(modelId);
+}
+
 function toCamelCase(str: string): string {
   return str.replace(/[-_]([a-z])/g, (_, g) => g.toUpperCase());
 }
@@ -2118,6 +2143,18 @@ function resolveRawReasoningCapabilities(
     }
   }
 
+  if (qwenRuleApplies(npm, modelId, metadata)) {
+    return {
+      levels: [...QWEN_EFFORT_LEVELS],
+      defaultLevel: 'high',
+      supportsSummaries: false,
+      mode: 'controllable',
+      source: 'provider-rule',
+      confidence: 'documented',
+      wireFormat: { kind: 'openai-reasoning-effort' },
+    };
+  }
+
   if (hasSupportedParameter(metadata, 'reasoning_effort')) {
     return {
       levels: ['low', 'medium', 'high', 'xhigh'],
@@ -2330,6 +2367,12 @@ export function effortProviderOptions(
         const key = metadata?.providerId ? toCamelCase(metadata.providerId) : 'openaiCompatible';
         return { [key]: { reasoningEffort: effort } };
       }
+    }
+    if (qwenRuleApplies(npm, modelId, metadata)) {
+      const reasoningEffort = effort === 'off' ? 'none' : effort;
+      if (!(QWEN_EFFORT_LEVELS as readonly string[]).includes(reasoningEffort)) return undefined;
+      const key = metadata?.providerId ? toCamelCase(metadata.providerId) : 'openaiCompatible';
+      return { [key]: { reasoningEffort } };
     }
     if (hasSupportedParameter(metadata, 'reasoning_effort')) {
       const reasoningEffort = mapCodexEffortToOpenAICompatible(effort);

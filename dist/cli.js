@@ -74,13 +74,13 @@ import {
   supportsClaudeTransparentMode,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-P2E5CTWT.js";
+} from "./chunk-ZUVSL6UO.js";
 import {
   extractApiKey,
   readBody,
   sendJson,
   warnDisabledPoolMembers
-} from "./chunk-7ADYT32Q.js";
+} from "./chunk-AH35F5EN.js";
 import {
   printUiUrlLast
 } from "./chunk-4BVKM3FX.js";
@@ -108,10 +108,11 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-NYFFGT3O.js";
+} from "./chunk-PGZRXJWQ.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
+  COMPACTION_SUMMARY_INSTRUCTION,
   CodexPoolRuntime,
   DEFAULT_POOL_LIMITS,
   FREE_POOL_MODEL_ID,
@@ -124,20 +125,36 @@ import {
   buildCatalogFile,
   buildCodexAppRootConfig,
   catalogEntryFromModel,
+  charsPerToken,
   codexAppModelSlug,
   codexPoolCatalogEntry,
   codexPoolCatalogModel,
+  collectSummaryText,
+  conversationKey,
   decodeCompactionContent,
   dispatchFreePool,
+  estimateInputItemChars,
+  estimateResponsesBodyChars,
+  estimateValueChars,
   formatCodexModelLabel,
+  formatRelayUsage,
   generateCompactionResponse,
   generateResponsesResponse,
   lazyPoolRoute,
+  liftAdditionalToolsInput,
+  makeCompactionItem,
+  newResponseId,
+  noteModelFamily,
+  overflowError,
   parseCodexAppModelSlug,
+  parseContextOverflow,
+  parseImageTooLarge,
+  parseImageUnsupported,
   poolCatalogEntry,
   poolOutputCap,
   poolRequestFitsWindow,
   prepareCodexPoolRoutes,
+  recordUsageCalibration,
   renderMultiAgentV2Feature,
   sdkPoolRoute,
   serializeCatalog,
@@ -145,8 +162,9 @@ import {
   streamResponsesResponse,
   supportsMultiAgentV2,
   translateResponsesRequest,
+  writeResponsesCreated,
   writeResponsesErrorStream
-} from "./chunk-OKSVQXT5.js";
+} from "./chunk-7PT2Z5MH.js";
 import {
   OPENCODE_SESSION_HEADER,
   PoolHealthStore,
@@ -185,19 +203,19 @@ import {
   retryPoolFailure,
   routableModelsForTarget,
   toOAuthRegistryId
-} from "./chunk-RPTGNMJP.js";
+} from "./chunk-KFN6FIVD.js";
 import {
   effectiveProviderBaseUrl,
   isLikelyPlaceholderKey,
   resolveProviderTemplate,
   resolveRefreshCredential,
   syntheticTemplate
-} from "./chunk-5IM432XT.js";
+} from "./chunk-SPGBIVJG.js";
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-EYIJ6J6Z.js";
-import "./chunk-7PYO2CQY.js";
+} from "./chunk-KI3E5OAI.js";
+import "./chunk-M5YJ5QYR.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -208,7 +226,7 @@ import {
   formatUpstreamError,
   formatUpstreamErrorTrace,
   upstreamHttpStatus
-} from "./chunk-IRMXZJ3D.js";
+} from "./chunk-WHW3PFHG.js";
 import {
   EFFORT_RANK,
   VERTEX_ANTHROPIC_PROVIDER_ID,
@@ -240,6 +258,7 @@ import {
   loadPreferences,
   loadRegistry,
   localIsoTimestamp,
+  localTimestamp,
   makeTraceLogger,
   maxToolsForNpm,
   migrateLegacyCloudProviders,
@@ -270,8 +289,9 @@ import {
   validateProviderName,
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
+  withAnthropicThinkingDisplay,
   writeSecureLogLine
-} from "./chunk-HWZBCTO3.js";
+} from "./chunk-EQV5336U.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -309,7 +329,7 @@ import {
   saveToCredentialStore,
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth
-} from "./chunk-VWAB7443.js";
+} from "./chunk-JHMI5LJT.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -3453,7 +3473,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-IPDLKBUP.js");
+      const { testModel } = await import("./test-model-OJGWDR7M.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -3668,9 +3688,494 @@ import * as p10 from "@clack/prompts";
 import { join as join9 } from "path";
 
 // src/codex-proxy.ts
-import { createHash as createHash2 } from "crypto";
+import { createHash as createHash4 } from "crypto";
 import { createServer } from "http";
 import { WebSocket } from "ws";
+
+// src/image-fit.ts
+import { createHash } from "crypto";
+var ANTHROPIC_IMAGE_BASE64_LIMIT = 10485760;
+var HEADROOM = 64 * 1024;
+var CAP = ANTHROPIC_IMAGE_BASE64_LIMIT - HEADROOM;
+var REACTIVE_IMAGE_POLICY = { maxLongEdge: 2576, maxBase64Bytes: CAP };
+var MB = 1024 * 1024;
+var GENERIC_IMAGE_POLICY = { maxLongEdge: 2048, maxBase64Bytes: 3 * MB, maxTotalBase64Bytes: 7 * MB, soft: true };
+var GENERIC_REACTIVE_IMAGE_POLICY = { maxLongEdge: 1568, maxBase64Bytes: 1.5 * MB, maxTotalBase64Bytes: 4 * MB, soft: true };
+var MIN_IMAGE_SHARE = 256 * 1024;
+var CACHE_LIMIT = 64;
+function claudeLongEdge(modelId) {
+  const sep = modelId.lastIndexOf("__");
+  const id = (sep >= 0 ? modelId.slice(sep + 2) : modelId).toLowerCase();
+  if (id.includes("fable") || id.includes("mythos")) return 2576;
+  const m = id.match(/claude-(opus|sonnet|haiku)-(\d+)(?:-(\d+))?/);
+  if (!m) return 1568;
+  const version = Number(m[2]) + (m[3] !== void 0 && m[3].length <= 2 ? Number(m[3]) / 10 : 0);
+  const min = m[1] === "opus" ? 4.7 : m[1] === "sonnet" ? 5 : 5.5;
+  return version >= min ? 2576 : 1568;
+}
+function isClaudeImageRoute(route) {
+  return route.npm === "@ai-sdk/anthropic" || route.npm === VERTEX_ANTHROPIC_NPM;
+}
+function imagePolicyForRoute(route) {
+  if (!isClaudeImageRoute(route)) return GENERIC_IMAGE_POLICY;
+  return { maxLongEdge: claudeLongEdge(route.upstreamModelId ?? route.modelId), maxBase64Bytes: CAP };
+}
+function reactiveImagePolicyForRoute(route) {
+  return isClaudeImageRoute(route) ? REACTIVE_IMAGE_POLICY : GENERIC_REACTIVE_IMAGE_POLICY;
+}
+var sharpLoader;
+async function loadSharp() {
+  if (process.env.RELAY_AI_DISABLE_SHARP === "1") return void 0;
+  sharpLoader ??= import("sharp").then((m) => m.default ?? m).catch(() => void 0);
+  return sharpLoader;
+}
+var cache = /* @__PURE__ */ new Map();
+function headerSize(buf) {
+  const dims = headerDimensions(buf);
+  const m = dims.match(/^(\d+)x(\d+)$/);
+  return m ? { width: Number(m[1]), height: Number(m[2]) } : void 0;
+}
+function headerDimensions(buf) {
+  if (buf.length >= 24 && buf.readUInt32BE(0) === 2303741511) return `${buf.readUInt32BE(16)}x${buf.readUInt32BE(20)}`;
+  if (buf.length > 4 && buf[0] === 255 && buf[1] === 216) {
+    let i = 2;
+    while (i + 9 < buf.length) {
+      if (buf[i] !== 255) {
+        i++;
+        continue;
+      }
+      const marker = buf[i + 1];
+      const len = buf.readUInt16BE(i + 2);
+      if (marker >= 192 && marker <= 207 && ![196, 200, 204].includes(marker)) return `${buf.readUInt16BE(i + 7)}x${buf.readUInt16BE(i + 5)}`;
+      i += 2 + len;
+    }
+  }
+  return "large";
+}
+async function shrink(dataUrl, policy) {
+  const comma = dataUrl.indexOf(",");
+  const mime = dataUrl.slice(5, dataUrl.indexOf(";"));
+  const input = Buffer.from(dataUrl.slice(comma + 1), "base64");
+  const sharp = await loadSharp();
+  if (!sharp) return void 0;
+  try {
+    const meta = await sharp(input).metadata();
+    let longEdge = Math.min(policy.maxLongEdge, Math.max(meta.width ?? 0, meta.height ?? 0) || policy.maxLongEdge);
+    for (let round = 0; round < 6; round++) {
+      const resized = sharp(input).rotate().resize({ width: longEdge, height: longEdge, fit: "inside", withoutEnlargement: true });
+      const tries = mime === "image/png" && round === 0 ? [["image/png", () => resized.clone().png({ compressionLevel: 9 }).toBuffer()], ["image/jpeg", () => resized.clone().jpeg({ quality: 85, mozjpeg: false }).toBuffer()]] : [["image/jpeg", () => resized.clone().jpeg({ quality: round === 0 ? 85 : 75, mozjpeg: false }).toBuffer()]];
+      for (const [outMime, encode] of tries) {
+        const out = await encode();
+        if (Math.ceil(out.length / 3) * 4 <= policy.maxBase64Bytes) return `data:${outMime};base64,${out.toString("base64")}`;
+      }
+      longEdge = Math.floor(longEdge * 0.75);
+    }
+    return void 0;
+  } catch {
+    return void 0;
+  }
+}
+function remember(key, value) {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > CACHE_LIMIT) {
+    const oldest = cache.keys().next().value;
+    if (oldest === void 0) break;
+    cache.delete(oldest);
+  }
+}
+async function fitPart(part, policy, counts, opts) {
+  if (part["type"] !== "input_image" || typeof part["image_url"] !== "string") return part;
+  const url = part["image_url"];
+  if (!url.startsWith("data:image/")) return part;
+  const b64 = url.length - url.indexOf(",") - 1;
+  if (b64 <= policy.maxBase64Bytes) {
+    if (!opts.resizeOversizedDimensions) return part;
+    const size = headerSize(Buffer.from(url.slice(url.indexOf(",") + 1, url.indexOf(",") + 1 + 65536), "base64"));
+    if (!size || Math.max(size.width, size.height) <= policy.maxLongEdge) return part;
+  }
+  const key = createHash("sha256").update(`${policy.maxLongEdge}:${policy.maxBase64Bytes}:`).update(url).digest("hex");
+  let fitted = cache.get(key);
+  if (!fitted) {
+    fitted = await shrink(url, policy);
+    if (fitted) remember(key, fitted);
+  }
+  if (fitted) {
+    counts.resized++;
+    return { ...part, image_url: fitted };
+  }
+  if (policy.soft) return part;
+  counts.omitted++;
+  return omittedNote(url);
+}
+function omittedNote(url) {
+  const dims = headerDimensions(Buffer.from(url.slice(url.indexOf(",") + 1, url.indexOf(",") + 1 + 4096), "base64"));
+  return { type: "input_text", text: `[image omitted: ${dims} image exceeds this model's size limit]` };
+}
+async function fitParts(parts, policy, counts, opts) {
+  let changed = false;
+  const out = [];
+  for (const p17 of parts) {
+    const next = p17 && typeof p17 === "object" ? await fitPart(p17, policy, counts, opts) : p17;
+    if (next !== p17) changed = true;
+    out.push(next);
+  }
+  return changed ? out : void 0;
+}
+function imageParts(input) {
+  const out = [];
+  input.forEach((entry, item) => {
+    const it = entry;
+    const field = Array.isArray(it["content"]) ? "content" : Array.isArray(it["output"]) ? "output" : void 0;
+    if (!field) return;
+    it[field].forEach((p17, part) => {
+      const rec = p17;
+      if (rec && rec["type"] === "input_image" && typeof rec["image_url"] === "string" && rec["image_url"].startsWith("data:image/")) {
+        out.push({ item, field, part, url: rec["image_url"] });
+      }
+    });
+  });
+  return out;
+}
+function base64Bytes(url) {
+  return url.length - url.indexOf(",") - 1;
+}
+async function fitImagesInInput(input, policy, opts = {}) {
+  const first = await fitEachImage(input, policy, opts);
+  const cap = policy.maxTotalBase64Bytes;
+  if (!cap) return first;
+  const total = (r) => imageParts(r.input).reduce((n, img) => n + base64Bytes(img.url), 0);
+  if (total(first) <= cap) return first;
+  if (policy.soft && !await loadSharp()) return first;
+  const originals = imageParts(input);
+  const share = Math.max(MIN_IMAGE_SHARE, Math.floor(cap / Math.max(1, originals.length)));
+  let result = share < policy.maxBase64Bytes ? await fitEachImage(input, { ...policy, maxBase64Bytes: share, maxTotalBase64Bytes: void 0 }, opts) : first;
+  let size = total(result);
+  if (size <= cap) return result;
+  const out = result.input.slice();
+  let { resized, omitted } = result;
+  for (const img of imageParts(result.input)) {
+    if (size <= cap) break;
+    const original = originals.find((o) => o.item === img.item && o.field === img.field && o.part === img.part);
+    const entry = { ...out[img.item] };
+    const parts = entry[img.field].slice();
+    parts[img.part] = omittedNote(original?.url ?? img.url);
+    entry[img.field] = parts;
+    out[img.item] = entry;
+    size -= base64Bytes(img.url);
+    omitted++;
+    if (original && original.url !== img.url) resized--;
+  }
+  return { input: out, resized, omitted };
+}
+async function fitEachImage(input, policy, opts) {
+  const counts = { resized: 0, omitted: 0 };
+  let changed = false;
+  const out = [];
+  for (const item of input) {
+    const it = item;
+    let next = item;
+    if (Array.isArray(it["content"])) {
+      const parts = await fitParts(it["content"], policy, counts, opts);
+      if (parts) next = { ...it, content: parts };
+    } else if (Array.isArray(it["output"])) {
+      const parts = await fitParts(it["output"], policy, counts, opts);
+      if (parts) next = { ...it, output: parts };
+    }
+    if (next !== item) changed = true;
+    out.push(next);
+  }
+  return { input: changed ? out : input, ...counts };
+}
+var IMAGE_REMOVED_NOTE = "[image removed: this model can't read images]";
+function stripImagesInInput(input) {
+  let removed = 0;
+  const strip = (parts) => {
+    let changed2 = false;
+    const out2 = parts.map((p17) => {
+      if (p17 && typeof p17 === "object" && p17["type"] === "input_image") {
+        changed2 = true;
+        removed++;
+        return { type: "input_text", text: IMAGE_REMOVED_NOTE };
+      }
+      return p17;
+    });
+    return changed2 ? out2 : void 0;
+  };
+  let changed = false;
+  const out = input.map((item) => {
+    const it = item;
+    const field = Array.isArray(it["content"]) ? "content" : Array.isArray(it["output"]) ? "output" : void 0;
+    if (!field) return item;
+    const parts = strip(it[field]);
+    if (!parts) return item;
+    changed = true;
+    return { ...it, [field]: parts };
+  });
+  return { input: changed ? out : input, removed };
+}
+
+// src/codex-auto-summarize.ts
+import { createHash as createHash2 } from "crypto";
+function autoSummarizeMode(env = process.env) {
+  const v = env.RELAY_AI_AUTO_SUMMARIZE?.trim().toLowerCase();
+  return v === "off" || v === "overflow" ? v : "all";
+}
+var CALL_TYPES = /* @__PURE__ */ new Set(["function_call", "custom_tool_call", "tool_search_call"]);
+var OUTPUT_TYPES = /* @__PURE__ */ new Set(["function_call_output", "custom_tool_call_output", "tool_search_output"]);
+var HOST_CONTEXT_MARKERS = ["# AGENTS.md instructions", "<environment_context>", "<user_instructions>", "<permissions instructions>", "<collaboration_mode>"];
+var PER_ITEM_TRANSCRIPT_CAP = 2e4;
+var CHECKPOINT_LIMIT = 64;
+var role = (item) => "role" in item ? item.role : void 0;
+var callId = (item) => item.call_id;
+var isUserMessage = (item) => role(item) === "user" && (item.type === void 0 || item.type === "message");
+var isCompaction = (item) => item.type === "compaction" || item.type === "context_compaction";
+function isHistoryItem(item) {
+  return CALL_TYPES.has(item.type ?? "") || role(item) === "assistant" || item.type === "reasoning" || isCompaction(item);
+}
+function messageText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((p17) => {
+    const part = p17;
+    if (typeof part.text === "string") return part.text;
+    if (part.type === "input_image" || part.type === "image") return "[image]";
+    return "";
+  }).join("");
+}
+function isPinned(item, inPreamble) {
+  if (role(item) === "developer") return true;
+  if (!inPreamble || !isUserMessage(item)) return false;
+  const text7 = messageText(item.content).trimStart();
+  return HOST_CONTEXT_MARKERS.some((m) => text7.startsWith(m));
+}
+function partitionPinned(input) {
+  const pinned = [];
+  const rest = [];
+  let inPreamble = true;
+  for (const item of input) {
+    if (isHistoryItem(item)) inPreamble = false;
+    (isPinned(item, inPreamble) ? pinned : rest).push(item);
+  }
+  return { pinned, rest };
+}
+function toUnits(input) {
+  const units = [];
+  let current;
+  let currentKind;
+  const open = /* @__PURE__ */ new Set();
+  for (const item of input) {
+    const type = item.type ?? "message";
+    if (open.size > 0) {
+      current.push(item);
+      const id2 = callId(item);
+      if (OUTPUT_TYPES.has(type) && id2) open.delete(id2);
+      else if (CALL_TYPES.has(type) && id2) open.add(id2);
+      continue;
+    }
+    const messageLike = type === "message" && role(item) !== "assistant" || type === "additional_tools" || isCompaction(item);
+    if (messageLike) {
+      current = [item];
+      currentKind = "message";
+      units.push(current);
+      continue;
+    }
+    const lastType = current?.[current.length - 1]?.type ?? "";
+    if (currentKind !== "assistant" || OUTPUT_TYPES.has(lastType)) {
+      current = [];
+      currentKind = "assistant";
+      units.push(current);
+    }
+    current.push(item);
+    const id = callId(item);
+    if (CALL_TYPES.has(type) && id) open.add(id);
+  }
+  return units;
+}
+var unitChars = (unit) => unit.reduce((n, i) => n + estimateInputItemChars(i), 0);
+function clipText(text7, max) {
+  if (text7.length <= max) return text7;
+  const marker = `
+[... ${text7.length - max} chars clipped ...]
+`;
+  const edge = Math.max(1, Math.floor((max - marker.length) / 2));
+  return text7.slice(0, edge) + marker + text7.slice(-edge);
+}
+function clipUnit(unit, budget) {
+  const total = unitChars(unit);
+  if (total <= budget) return unit;
+  return unit.map((item) => {
+    const it = item;
+    const share = Math.max(1e3, Math.floor(budget * (estimateInputItemChars(item) / total)));
+    if (typeof it.output === "string") return { ...it, output: clipText(it.output, share) };
+    if (typeof it.arguments === "string") return { ...it, arguments: clipText(it.arguments, share) };
+    if (Array.isArray(it.content)) {
+      return { ...it, content: it.content.map((p17) => typeof p17.text === "string" ? { ...p17, text: clipText(p17.text, share) } : p17) };
+    }
+    return item;
+  });
+}
+function splitUnpinned(rest, tailCharBudget) {
+  const opts = { tailCharBudget };
+  const units = toUnits(rest);
+  if (units.length < 2) return void 0;
+  let used = 0;
+  let start = units.length;
+  for (let i = units.length - 1; i >= 0; i--) {
+    const c = unitChars(units[i]);
+    if (start < units.length && used + c > opts.tailCharBudget) break;
+    used += c;
+    start = i;
+  }
+  if (start === 0) return void 0;
+  const tailUnits = units.slice(start);
+  if (tailUnits.length === 1) tailUnits[0] = clipUnit(tailUnits[0], opts.tailCharBudget);
+  return { head: units.slice(0, start).flat(), tail: tailUnits.flat() };
+}
+function hoistToolDefinitions(head) {
+  const tools = [];
+  for (const item of head) {
+    if ((item.type === "additional_tools" || item.type === "tool_search_output") && Array.isArray(item.tools)) {
+      tools.push(...item.tools);
+    }
+  }
+  return { tools };
+}
+function renderItem(item) {
+  const it = item;
+  const type = item.type ?? "message";
+  if (isCompaction(item)) return `[Earlier summary]
+${decodeCompactionContent(it.encrypted_content) ?? ""}`;
+  if (type === "message" || type === "agent_message") return `${(role(item) ?? "assistant").toUpperCase()}: ${messageText(it.content)}`;
+  if (type === "reasoning") return `ASSISTANT (thinking): ${messageText(it.summary)}`;
+  if (type === "function_call") return `ASSISTANT called tool ${it.namespace ? `${String(it.namespace)}.` : ""}${String(it.name)}(${String(it.arguments ?? "")})`;
+  if (type === "custom_tool_call") return `ASSISTANT called tool ${String(it.name)}: ${typeof it.input === "string" ? it.input : JSON.stringify(it.input ?? "")}`;
+  if (type === "tool_search_call") return "ASSISTANT searched for tools";
+  if (type === "tool_search_output") return `TOOL SEARCH returned ${Array.isArray(it.tools) ? it.tools.length : 0} tool group(s)`;
+  if (type === "additional_tools") return "[tools were added]";
+  if (OUTPUT_TYPES.has(type)) {
+    const output = it.output;
+    const text7 = typeof output === "string" ? output : Array.isArray(output) ? messageText(output) : JSON.stringify(output ?? "");
+    return `TOOL RESULT: ${text7}`;
+  }
+  return `[${type}]`;
+}
+function renderTranscript(items) {
+  return items.map((item) => clipText(renderItem(item), PER_ITEM_TRANSCRIPT_CAP).replace(/data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi, "[image]")).join("\n\n");
+}
+function buildSummaryParams(transcript, previousSummary) {
+  const prefix = previousSummary ? `Summary of the conversation so far:
+${previousSummary}
+
+Later conversation to fold into the summary:
+` : "Conversation to summarize:\n";
+  return {
+    messages: [{ role: "user", content: [{ type: "text", text: `${prefix}${transcript}
+
+${COMPACTION_SUMMARY_INSTRUCTION}` }] }],
+    maxOutputTokens: 4e3
+  };
+}
+var checkpoints = /* @__PURE__ */ new Map();
+var inFlight = /* @__PURE__ */ new Map();
+function hashForm(item) {
+  return JSON.stringify(item, (key, value) => {
+    if (key === "id" || key === "status") return void 0;
+    if (key === "annotations" && Array.isArray(value) && value.length === 0) return void 0;
+    return value;
+  });
+}
+function chainHashes(items) {
+  const out = [];
+  let h = "";
+  for (const item of items) {
+    h = createHash2("sha256").update(h).update(hashForm(item)).digest("hex");
+    out.push(h);
+  }
+  return out;
+}
+function remember2(key, cp) {
+  checkpoints.delete(key);
+  checkpoints.set(key, cp);
+  while (checkpoints.size > CHECKPOINT_LIMIT) {
+    const oldest = checkpoints.keys().next().value;
+    if (oldest === void 0) break;
+    checkpoints.delete(oldest);
+  }
+}
+function assemble(pinned, cp, after) {
+  const item = makeCompactionItem(cp.summary, `cmp_${cp.headHash.slice(0, 24)}`);
+  return [...pinned, item, ...after];
+}
+var charsOf = (items) => items.reduce((n, i) => n + estimateInputItemChars(i), 0);
+async function applySummaryCheckpoint(args) {
+  const { pinned, rest } = partitionPinned(args.input);
+  const hashes = chainHashes(rest);
+  const existing = checkpoints.get(args.key);
+  const matches = existing && existing.headLength <= rest.length && hashes[existing.headLength - 1] === existing.headHash;
+  if (existing && matches) {
+    const reused = assemble(pinned, existing, rest.slice(existing.headLength));
+    if (charsOf(reused) <= args.budgetChars) {
+      remember2(args.key, existing);
+      return { input: reused, hoistedTools: existing.hoistedTools, summarized: false, reused: true, summarizedItems: 0 };
+    }
+  }
+  const base = existing && matches ? existing : void 0;
+  const covered = base?.headLength ?? 0;
+  const remainder = rest.slice(covered);
+  const tailBudget = Math.max(1, args.targetChars - charsOf(pinned) - args.summaryReserveChars);
+  const split = splitUnpinned(remainder, tailBudget);
+  if (!split || split.head.length === 0) {
+    if (base) return { input: assemble(pinned, base, remainder), hoistedTools: base.hoistedTools, summarized: false, reused: true, summarizedItems: 0 };
+    return { input: args.input, hoistedTools: [], summarized: false, reused: false, summarizedItems: 0 };
+  }
+  const headLength = covered + split.head.length;
+  const headHash = hashes[headLength - 1];
+  const flightKey = `${args.key}\0${headHash}`;
+  let pending = inFlight.get(flightKey);
+  if (!pending) {
+    pending = (async () => {
+      let summary = base?.summary;
+      let chunk = [];
+      let chunkLen = 0;
+      const flush = async () => {
+        if (chunk.length === 0) return;
+        const next = await args.summarize(renderTranscript(chunk), summary);
+        if (!next.trim()) throw new Error("auto-summarize: provider returned an empty summary");
+        summary = next;
+        chunk = [];
+        chunkLen = 0;
+      };
+      for (const item of split.head) {
+        const c = Math.min(estimateInputItemChars(item), PER_ITEM_TRANSCRIPT_CAP);
+        if (chunkLen + c > args.chunkChars) await flush();
+        chunk.push(item);
+        chunkLen += c;
+      }
+      await flush();
+      const cp2 = {
+        headLength,
+        headHash,
+        summary,
+        hoistedTools: [...base?.hoistedTools ?? [], ...hoistToolDefinitions(split.head).tools]
+      };
+      remember2(args.key, cp2);
+      return cp2;
+    })();
+    inFlight.set(flightKey, pending);
+    pending.then(() => inFlight.delete(flightKey), () => inFlight.delete(flightKey));
+  }
+  const cp = await pending;
+  return { input: assemble(pinned, cp, split.tail), hoistedTools: cp.hoistedTools, summarized: true, reused: false, summarizedItems: split.head.length };
+}
+function hasMatchingCheckpoint(key, input) {
+  const cp = checkpoints.get(key);
+  if (!cp) return false;
+  const { rest } = partitionPinned(input);
+  if (cp.headLength <= rest.length && chainHashes(rest.slice(0, cp.headLength))[cp.headLength - 1] === cp.headHash) return true;
+  checkpoints.delete(key);
+  return false;
+}
 
 // src/codex/native-forward.ts
 var NATIVE_CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
@@ -3719,10 +4224,10 @@ function prepareNativeCodexBody(body) {
     if (!item || typeof item !== "object" || Array.isArray(item)) return [item];
     const record = item;
     if (typeof record.call_id === "string") {
-      const callId = stripToolUseIdSuffix(record.call_id);
-      if (callId !== record.call_id) {
+      const callId2 = stripToolUseIdSuffix(record.call_id);
+      if (callId2 !== record.call_id) {
         changed = true;
-        return [{ ...record, call_id: callId }];
+        return [{ ...record, call_id: callId2 }];
       }
     }
     if (record.type === "reasoning" && typeof record.encrypted_content !== "string") {
@@ -3782,7 +4287,7 @@ function nativeResponsesWebSocketOptions(options) {
 }
 
 // src/codex/collaboration-payload.ts
-import { createHash } from "crypto";
+import { createHash as createHash3 } from "crypto";
 var NATIVE_ENCRYPTED_TOKEN = /^gAAAAA[A-Za-z0-9_-]+={0,2}$/;
 var COLLABORATION_HEADER = /Message Type:\s*(?:NEW_TASK|MESSAGE|FOLLOWUP_TASK|FINAL_ANSWER)\b[\s\S]*\nPayload:\s*/i;
 var PAYLOAD_BOUNDARY = /^Payload:\s*$/m;
@@ -3954,17 +4459,17 @@ function parsePayloadResponse(text7) {
 }
 function createNativePayloadRelay(options) {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const cache = /* @__PURE__ */ new Map();
+  const cache2 = /* @__PURE__ */ new Map();
   let cacheBytes = 0;
   const removeCacheEntry = (key) => {
-    const entry = cache.get(key);
+    const entry = cache2.get(key);
     if (!entry) return;
-    cache.delete(key);
+    cache2.delete(key);
     cacheBytes -= entry.bytes;
   };
   const pruneCache = () => {
     const now = Date.now();
-    for (const [key, entry] of cache) {
+    for (const [key, entry] of cache2) {
       if (entry.expiresAt <= now) removeCacheEntry(key);
     }
   };
@@ -3972,12 +4477,12 @@ function createNativePayloadRelay(options) {
     const bytes = Buffer.byteLength(value, "utf8");
     if (bytes > NATIVE_PAYLOAD_CACHE_MAX_BYTES) return;
     removeCacheEntry(key);
-    while (cache.size >= NATIVE_PAYLOAD_CACHE_MAX_ENTRIES || cacheBytes + bytes > NATIVE_PAYLOAD_CACHE_MAX_BYTES) {
-      const oldest = cache.keys().next().value;
+    while (cache2.size >= NATIVE_PAYLOAD_CACHE_MAX_ENTRIES || cacheBytes + bytes > NATIVE_PAYLOAD_CACHE_MAX_BYTES) {
+      const oldest = cache2.keys().next().value;
       if (!oldest) break;
       removeCacheEntry(oldest);
     }
-    cache.set(key, { expiresAt, value, bytes });
+    cache2.set(key, { expiresAt, value, bytes });
     cacheBytes += bytes;
   };
   return {
@@ -3986,9 +4491,9 @@ function createNativePayloadRelay(options) {
       if (ciphertext.kind !== "native-encrypted") throw new Error("Expected a native encrypted collaboration item");
       const accountId = context.headers["chatgpt-account-id"] ?? context.headers["ChatGPT-Account-Id"];
       if (!accountId) throw new Error("Native collaboration relay requires ChatGPT-Account-Id");
-      const key = `${accountId}\0${createHash("sha256").update(ciphertext.ciphertext).digest("hex")}`;
+      const key = `${accountId}\0${createHash3("sha256").update(ciphertext.ciphertext).digest("hex")}`;
       pruneCache();
-      const cached = cache.get(key);
+      const cached = cache2.get(key);
       if (cached && cached.expiresAt > Date.now()) return cached.value;
       const url = `${context.nativeBaseUrl.replace(/\/$/, "")}/responses`;
       const body = JSON.stringify({
@@ -4009,7 +4514,7 @@ function createNativePayloadRelay(options) {
       return payload;
     },
     clear() {
-      cache.clear();
+      cache2.clear();
       cacheBytes = 0;
     }
   };
@@ -4114,25 +4619,15 @@ function isExternalToolCallItem(item) {
 function isExternalHistoryItem(item) {
   return isExternalToolCallItem(item) || "role" in item && item.role === "assistant" || item.type === "reasoning" || item.type === "compaction" || item.type === "context_compaction";
 }
-var IMAGE_PART_CHAR_WEIGHT = 4e3;
-function isImageContentPart(part) {
-  if (part["type"] === "image") return true;
-  return part["type"] === "file" && typeof part["mediaType"] === "string" && part["mediaType"].startsWith("image");
-}
 function estimateCodexRequestChars(params) {
   let chars = (params.instructions ?? "").length;
+  if (params.tools) chars += estimateValueChars(params.tools);
   for (const msg of params.messages) {
     if (Array.isArray(msg.content)) {
       for (const part of msg.content) {
         if (!part || typeof part !== "object") continue;
         const p17 = part;
-        if (typeof p17["text"] === "string") {
-          chars += p17["text"].length;
-        } else if (isImageContentPart(p17)) {
-          chars += IMAGE_PART_CHAR_WEIGHT;
-        } else {
-          chars += JSON.stringify(part).length;
-        }
+        chars += estimateValueChars(typeof p17["text"] === "string" ? p17["text"] : part);
       }
     } else if (typeof msg.content === "string") {
       chars += msg.content.length;
@@ -4237,12 +4732,12 @@ function streamOutcome(failure, okStatus) {
     status: failure.errorStatus ?? (failure.errorMessage ? upstreamHttpStatus(void 0, failure.errorMessage) : "stream-aborted")
   };
 }
-function protectCodexCompactionParams(body, params, contextWindow) {
+function protectCodexCompactionParams(body, params, contextWindow, charsPerToken2 = 3) {
   if (!isLikelyCodexCompactionRequest(body)) {
-    return trimToContextLimit(params, contextWindow);
+    return trimToContextLimit(params, contextWindow, Math.floor(contextWindow * 0.85 * charsPerToken2));
   }
-  const clipped = clipLargeTextParts(params, 12e3);
-  const compactCharLimit = Math.floor(contextWindow * CODEX_APP_AUTO_COMPACT_RATIO) * 3;
+  const clipped = clipLargeTextParts({ ...params, tools: void 0 }, 12e3);
+  const compactCharLimit = Math.floor(contextWindow * CODEX_APP_AUTO_COMPACT_RATIO * charsPerToken2);
   const trimmed = trimToContextLimit(clipped, contextWindow, compactCharLimit);
   return {
     ...trimmed,
@@ -4251,7 +4746,7 @@ function protectCodexCompactionParams(body, params, contextWindow) {
   };
 }
 var PROXY_PLACEHOLDER_KEY = "proxy-local";
-var MAX_CODEX_REQUEST_BYTES = 4 * 1024 * 1024;
+var MAX_CODEX_REQUEST_BYTES = 32 * 1024 * 1024;
 function codexRouteLookupIds(requestedModel) {
   const ids = routeLookupIds(requestedModel);
   const bare = parseCodexAppModelSlug(requestedModel);
@@ -4332,6 +4827,163 @@ async function resolveModel(routes, models, requestedModel, options = {}) {
     }
   }
   return { route, languageModel };
+}
+var BUDGET_RATIO = 0.85;
+var SUMMARY_BUDGET_RATIO = 0.82;
+var SWITCH_TRIGGER_RATIO = 0.5;
+var OVERFLOW_TARGET_RATIO = 0.6;
+var SWITCH_TARGET_RATIO = 0.35;
+var SUMMARY_CHUNK_RATIO = 0.6;
+var SUMMARY_RESERVE_TOKENS = 4e3;
+function modelVendor(modelId, fallback = "other") {
+  const sep = modelId.lastIndexOf("__");
+  const id = (sep >= 0 ? modelId.slice(sep + 2) : modelId).toLowerCase();
+  const rules = [
+    [/claude|fable|mythos/, "claude"],
+    [/gpt|^o\d|codex|chatgpt/, "openai"],
+    [/gemini|gemma/, "gemini"],
+    [/deepseek/, "deepseek"],
+    [/kimi|moonshot/, "kimi"],
+    [/glm|zai|zhipu/, "glm"],
+    [/qwen|qwq/, "qwen"],
+    [/grok/, "grok"],
+    [/mistral|codestral|magistral|ministral|devstral/, "mistral"],
+    [/minimax/, "minimax"]
+  ];
+  for (const [re, vendor] of rules) if (re.test(id)) return vendor;
+  return fallback;
+}
+function routeFamily(route) {
+  return modelVendor(route.upstreamModelId ?? route.modelId, `other:${providerKind(route.providerId?.trim().toLowerCase() ?? "") || route.npm}`);
+}
+function toolKey(tool3) {
+  const t = tool3;
+  return `${t.type ?? ""}:${t.name ?? JSON.stringify(tool3)}`;
+}
+function mergeTools(existing, extra) {
+  if (extra.length === 0) return existing;
+  const base = Array.isArray(existing) ? existing : [];
+  const seen = new Set(base.map(toolKey));
+  return [...base, ...extra.filter((t) => !seen.has(toolKey(t)))];
+}
+var textOnlyModels = /* @__PURE__ */ new Set();
+function relayRetryKind(message, code) {
+  if (code === "context_length_exceeded" || overflowError(message)) return "context";
+  if (parseImageUnsupported(message)) return "no-image";
+  if (parseImageTooLarge(message)) return "image";
+  return void 0;
+}
+function retryLogText(kind) {
+  return kind === "context" ? "context overflow" : kind === "image" ? "image too large" : "model cannot read images";
+}
+async function prepareRelayBody(body, ctx) {
+  const lifted = liftAdditionalToolsInput(responsesInputItems(body.input), Array.isArray(body.tools) ? body.tools : []);
+  let next = lifted.input === body.input && !Array.isArray(body.tools) ? { ...body } : { ...body, input: lifted.input, ...lifted.tools.length || Array.isArray(body.tools) ? { tools: lifted.tools } : {} };
+  if (ctx.stripImages) textOnlyModels.add(ctx.route.modelId);
+  if (textOnlyModels.has(ctx.route.modelId)) {
+    const stripped = stripImagesInInput(next.input);
+    if (stripped.removed > 0) {
+      next = { ...next, input: stripped.input };
+      process.stderr.write(`[relay-ai] ${localTimestamp()} ${ctx.label}: removed ${stripped.removed} image(s) \u2014 this model can't read images
+`);
+      ctx.log(`images removed: model=${ctx.route.modelId} removed=${stripped.removed} (text-only model)`);
+    }
+  }
+  const imagePolicy = ctx.forceImages ? reactiveImagePolicyForRoute(ctx.route) : imagePolicyForRoute(ctx.route);
+  const fitted = await fitImagesInInput(next.input, imagePolicy, { resizeOversizedDimensions: Boolean(ctx.forceImages) });
+  if (fitted.input !== next.input) {
+    next = { ...next, input: fitted.input };
+    process.stderr.write(`[relay-ai] ${localTimestamp()} ${ctx.label}: resized ${fitted.resized} / omitted ${fitted.omitted} oversized image(s)
+`);
+    ctx.log(`images fitted: model=${ctx.route.modelId} resized=${fitted.resized} omitted=${fitted.omitted} forced=${Boolean(ctx.forceImages)}`);
+  }
+  const family = routeFamily(ctx.route);
+  const { previous } = noteModelFamily(ctx.key, family);
+  const window = ctx.route.contextWindow ?? 0;
+  const mode = autoSummarizeMode();
+  const compaction = isLikelyCodexCompactionRequest(body) || isCodexV2CompactionRequest(body);
+  const total = estimateResponsesBodyChars(next);
+  if (window <= 0 || mode === "off" || compaction) return { body: next, sentChars: total };
+  let ratio = charsPerToken(ctx.key);
+  if (ctx.force) ratio = Math.max(1, ratio * 0.6);
+  const tokens = total / ratio;
+  const overflow = Boolean(ctx.force) || tokens > BUDGET_RATIO * window;
+  const switched = mode === "all" && previous !== void 0 && previous !== family && tokens > SWITCH_TRIGGER_RATIO * window;
+  if (!overflow && !switched && !hasMatchingCheckpoint(ctx.key, next.input)) return { body: next, sentChars: total };
+  const reason = overflow || !switched ? "overflow" : "switch";
+  const input = next.input;
+  const overhead = total - input.reduce((n, item) => n + estimateValueChars(item), 0);
+  const targetRatio = reason === "switch" ? SWITCH_TARGET_RATIO : OVERFLOW_TARGET_RATIO;
+  try {
+    const result = await applySummaryCheckpoint({
+      input,
+      key: ctx.key,
+      budgetChars: Math.floor(SUMMARY_BUDGET_RATIO * window * ratio) - overhead,
+      targetChars: Math.floor(targetRatio * window * ratio) - overhead,
+      chunkChars: Math.floor(SUMMARY_CHUNK_RATIO * window * ratio),
+      summaryReserveChars: Math.floor(SUMMARY_RESERVE_TOKENS * ratio),
+      reason,
+      summarize: (transcript, previousSummary) => collectSummaryText(ctx.languageModel, buildSummaryParams(transcript, previousSummary), ctx.signal)
+    });
+    next = { ...next, input: result.input, tools: mergeTools(next.tools, result.hoistedTools) };
+    if (next.tools === void 0) delete next.tools;
+    const after = estimateResponsesBodyChars(next);
+    if (result.summarized) {
+      process.stderr.write(`[relay-ai] ${localTimestamp()} ${ctx.label}: summarized ${result.summarizedItems} earlier items (~${Math.round(total / ratio / 1e3)}K \u2192 ~${Math.round(after / ratio / 1e3)}K tokens, reason=${reason})
+`);
+    }
+    ctx.log(`auto-summarize: model=${ctx.route.modelId} reason=${reason} summarized=${result.summarized} reused=${result.reused} chars=${total}->${after} ratio=${ratio.toFixed(2)}`);
+    return { body: next, sentChars: after };
+  } catch (err) {
+    const msg = formatUpstreamError(err);
+    process.stderr.write(`[relay-ai] ${localTimestamp()} ${ctx.label}: auto-summarize failed: ${msg}
+`);
+    ctx.log(`auto-summarize failed: model=${ctx.route.modelId}: ${msg}`);
+    return { body: next, sentChars: total };
+  }
+}
+function httpBudgetFallbackKey(body) {
+  const first = responsesInputItems(body.input).find((item) => "role" in item && item.role === "user");
+  return "fb:" + createHash4("sha256").update(JSON.stringify(first ?? null)).digest("hex").slice(0, 32);
+}
+function noteNativeTurn(headers, body, modelId) {
+  noteModelFamily(conversationKey(extractConversationId(headers, body), httpBudgetFallbackKey(body)), modelVendor(modelId, "openai"));
+}
+function noteProviderOverflow(key, sentChars, message) {
+  const overflow = parseContextOverflow(message);
+  if (overflow?.actualTokens) recordUsageCalibration(key, sentChars, overflow.actualTokens);
+}
+function createOverflowGate(write, armed) {
+  let decided = !armed;
+  let held;
+  return {
+    write(chunk) {
+      if (decided) {
+        write(chunk);
+        return;
+      }
+      if (chunk.startsWith("event: response.failed")) {
+        const data = chunk.split("\n").find((line) => line.startsWith("data: "));
+        try {
+          const parsed = JSON.parse(data?.slice(6) ?? "{}");
+          const message = parsed.response?.error?.message ?? "";
+          const kind = relayRetryKind(message, parsed.response?.error?.code);
+          if (kind) {
+            held = { kind, message };
+            decided = true;
+            return;
+          }
+        } catch {
+        }
+      }
+      decided = true;
+      write(chunk);
+    },
+    /** The held failure, if this attempt ended in a retryable overflow or image refusal. */
+    held() {
+      return held;
+    }
+  };
 }
 async function prepareExternalCodexBody(body, context) {
   const externalBody = isCodexSubagentRequest(body, context.headers) ? stripCodexCollaborationTools(body) : body;
@@ -4600,6 +5252,7 @@ async function startCodexProxy(routes, options = {}) {
             return;
           }
           if (dispatch.kind === "native") {
+            noteNativeTurn(req.headers, body, modelId);
             audit({
               transport: "http",
               requestedModel: modelId,
@@ -4692,56 +5345,79 @@ async function startCodexProxy(routes, options = {}) {
             mixedNative,
             headers: req.headers
           });
+          const conversationId = extractConversationId(req.headers, routedBody);
           const requestHeaders = openCodeGoHeaders(
             route.providerId,
             route.baseURL,
-            extractConversationId(req.headers, routedBody),
+            conversationId,
             route.headers
           );
-          let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
-            routedBody,
-            route.npm,
-            {
-              providerId: route.providerId,
-              apiBaseUrl: route.baseURL,
-              supportedParameters: route.supportedParameters,
-              reasoning: route.reasoning,
-              interleavedReasoningField: route.interleavedReasoningField,
-              reasoningEffortLevels: route.reasoningEffortLevels,
-              reasoningEffortConflict: route.reasoningEffortConflict,
-              upstreamModelId: route.upstreamModelId
-            },
-            {
-              maxTools: maxToolsForNpm(route.npm),
-              ...requestHeaders ? { requestHeaders } : {}
-            }
-          ), route));
-          if (route.contextWindow && route.contextWindow > 0) {
-            const before = params.messages.length;
-            const estimatedChars = estimateCodexRequestChars(params);
-            const compaction = isLikelyCodexCompactionRequest(body);
-            if (debug) log15(`context check: model=${route.modelId} window=${route.contextWindow} chars=${estimatedChars} compaction=${compaction ? "yes" : "no"} messages=${before}`);
-            params = protectCodexCompactionParams(body, params, route.contextWindow);
-            if (debug && params.messages.length < before) {
-              log15(`context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages`);
-            }
-          }
+          const budgetKey = conversationKey(conversationId, httpBudgetFallbackKey(routedBody));
+          const label = routeLogLabel(modelId, route, relayDispatch);
+          const abort = new AbortController();
+          res.once("close", () => {
+            if (!res.writableEnded) abort.abort(new Error("client disconnected"));
+          });
           const v2Compaction = isCodexV2CompactionRequest(body);
-          if (v2Compaction) {
-            params = appendCompactionInstruction(params);
-            if (debug) log15(`compaction v2: synthesizing single compaction item for model=${route.modelId}`);
-          }
-          if (debug) {
-            const effort = body.reasoning?.effort;
-            log15(`model=${route.modelId} effort=${effort ?? "(none)"} maxOutputTokens=${String(params.maxOutputTokens ?? "(omitted)")} providerOptions=${JSON.stringify(params.providerOptions)}`);
-          }
+          const buildParams = (prepared) => {
+            let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
+              prepared,
+              route.npm,
+              {
+                providerId: route.providerId,
+                apiBaseUrl: route.baseURL,
+                supportedParameters: route.supportedParameters,
+                reasoning: route.reasoning,
+                interleavedReasoningField: route.interleavedReasoningField,
+                reasoningEffortLevels: route.reasoningEffortLevels,
+                reasoningEffortConflict: route.reasoningEffortConflict,
+                upstreamModelId: route.upstreamModelId
+              },
+              {
+                maxTools: maxToolsForNpm(route.npm),
+                ...requestHeaders ? { requestHeaders } : {}
+              }
+            ), route));
+            params = { ...params, providerOptions: withAnthropicThinkingDisplay(params.providerOptions, route) };
+            if (route.contextWindow && route.contextWindow > 0) {
+              const before = params.messages.length;
+              const estimatedChars = estimateCodexRequestChars(params);
+              const compaction = isLikelyCodexCompactionRequest(body);
+              if (debug) log15(`context check: model=${route.modelId} window=${route.contextWindow} chars=${estimatedChars} compaction=${compaction ? "yes" : "no"} messages=${before}`);
+              params = protectCodexCompactionParams(body, params, route.contextWindow, charsPerToken(budgetKey));
+              if (debug && params.messages.length < before) {
+                log15(`context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages`);
+              }
+            }
+            if (v2Compaction) {
+              params = appendCompactionInstruction(params);
+              if (debug) log15(`compaction v2: synthesizing single compaction item for model=${route.modelId}`);
+            }
+            if (debug) {
+              const effort = body.reasoning?.effort;
+              log15(`model=${route.modelId} effort=${effort ?? "(none)"} maxOutputTokens=${String(params.maxOutputTokens ?? "(omitted)")} providerOptions=${JSON.stringify(params.providerOptions)}`);
+            }
+            return params;
+          };
+          let retryKind;
+          const prepare = (attempt) => prepareRelayBody(routedBody, {
+            route,
+            languageModel,
+            key: budgetKey,
+            label,
+            log: log15,
+            signal: abort.signal,
+            force: attempt > 0 && retryKind === "context",
+            forceImages: attempt > 0 && retryKind === "image",
+            stripImages: attempt > 0 && retryKind === "no-image"
+          });
           if (body.stream) {
             res.writeHead(200, {
               "Content-Type": "text/event-stream",
               "Cache-Control": "no-cache",
               Connection: "keep-alive"
             });
-            const write = (chunk) => {
+            const rawWrite = (chunk) => {
               res.write(chunk);
               if (debug) {
                 const completed = captureCompletedResponse(chunk);
@@ -4756,35 +5432,77 @@ async function startCodexProxy(routes, options = {}) {
                 }
               }
             };
-            let streamFailure;
+            const responseId = newResponseId();
+            if (!v2Compaction) writeResponsesCreated(modelId, responseId, rawWrite);
             try {
-              if (v2Compaction) {
-                await streamCompactionResponse(languageModel, params, modelId, write);
-              } else
-                await streamResponsesResponse(languageModel, params, modelId, write, (summary) => {
-                  if (summary.errorMessage || summary.aborted || summary.incompleteReason) streamFailure = summary;
-                  if (debug) {
-                    const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.incompleteReason ? ` incomplete=${summary.incompleteReason}` : ""}${summary.finishReason ? ` finish=${summary.finishReason}` : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
-                    log15(`response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
-                  }
-                }, (progress) => {
-                  if (debug) {
-                    log15(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)} parts=[${progress.recentPartTypes ?? ""}]`);
-                  }
-                }, { logLabel: routeLogLabel(modelId, route, relayDispatch) });
-              audit({
-                transport: "http",
-                requestedModel: modelId,
-                dispatch: relayDispatch,
-                phase: "complete",
-                provider: route.providerId ?? "relay",
-                routeModel: route.modelId,
-                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
-                ...streamOutcome(streamFailure, 200)
-              });
+              for (let attempt = 0; attempt < 2; attempt++) {
+                const prepared = await prepare(attempt);
+                if (abort.signal.aborted) {
+                  audit({
+                    transport: "http",
+                    requestedModel: modelId,
+                    dispatch: relayDispatch,
+                    phase: "complete",
+                    provider: route.providerId ?? "relay",
+                    routeModel: route.modelId,
+                    upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+                    outcome: "error",
+                    status: "client-aborted"
+                  });
+                  break;
+                }
+                const params = buildParams(prepared.body);
+                const gate = createOverflowGate(rawWrite, attempt === 0 && !v2Compaction);
+                const write = gate.write;
+                let streamFailure;
+                let usage;
+                let thrown;
+                try {
+                  if (v2Compaction) {
+                    await streamCompactionResponse(languageModel, params, modelId, write);
+                  } else
+                    await streamResponsesResponse(languageModel, params, modelId, write, (summary) => {
+                      if (summary.errorMessage || summary.aborted || summary.incompleteReason) streamFailure = summary;
+                      usage = summary.usage;
+                      if (debug) {
+                        const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.incompleteReason ? ` incomplete=${summary.incompleteReason}` : ""}${summary.finishReason ? ` finish=${summary.finishReason}` : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
+                        log15(`response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}${formatRelayUsage(summary.usage)}`);
+                      }
+                    }, (progress) => {
+                      if (debug) {
+                        log15(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)} parts=[${progress.recentPartTypes ?? ""}]`);
+                      }
+                    }, { logLabel: label, responseId, skipCreated: true });
+                } catch (err) {
+                  const msg = formatUpstreamError(err);
+                  const status = upstreamHttpStatus(err, msg);
+                  thrown = { status };
+                  if (debug) log15(`sdk error: ${route.modelId}: ${msg}`);
+                  writeResponsesErrorStream(modelId, msg, write, typeof status === "number" ? status : 500);
+                }
+                const held = gate.held();
+                if (held) {
+                  retryKind = held.kind;
+                  if (held.kind === "context") noteProviderOverflow(budgetKey, prepared.sentChars, held.message);
+                  if (debug) log15(`${retryLogText(held.kind)} from provider; retrying once: model=${route.modelId}`);
+                  continue;
+                }
+                if (usage) recordUsageCalibration(budgetKey, prepared.sentChars, usage.inputTokens);
+                audit({
+                  transport: "http",
+                  requestedModel: modelId,
+                  dispatch: relayDispatch,
+                  phase: "complete",
+                  provider: route.providerId ?? "relay",
+                  routeModel: route.modelId,
+                  upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+                  ...thrown ? { outcome: "error", status: thrown.status } : streamOutcome(streamFailure, 200)
+                });
+                break;
+              }
             } catch (err) {
               const msg = formatUpstreamError(err);
-              const status = upstreamHttpStatus(err, msg);
+              log15(`handler error (stream): ${msg}`);
               audit({
                 transport: "http",
                 requestedModel: modelId,
@@ -4794,58 +5512,74 @@ async function startCodexProxy(routes, options = {}) {
                 routeModel: route.modelId,
                 upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
                 outcome: "error",
-                status
+                status: 500
               });
-              if (debug) log15(`sdk error: ${route.modelId}: ${msg}`);
-              writeResponsesErrorStream(modelId, msg, write, status);
+              if (!res.writableEnded) writeResponsesErrorStream(modelId, msg, rawWrite, 500);
             }
             res.end();
           } else {
-            try {
-              const response = v2Compaction ? await generateCompactionResponse(languageModel, params, modelId) : await generateResponsesResponse(languageModel, params, modelId);
-              if (debug) {
-                appendCodexBodyDump({
-                  ts: localIsoTimestamp(),
-                  transport: "http",
-                  direction: "response",
-                  model: route.modelId,
-                  response
+            for (let attempt = 0; attempt < 2; attempt++) {
+              const prepared = await prepare(attempt);
+              if (abort.signal.aborted) break;
+              const params = buildParams(prepared.body);
+              try {
+                const response = v2Compaction ? await generateCompactionResponse(languageModel, params, modelId) : await generateResponsesResponse(languageModel, params, modelId, (usage) => {
+                  recordUsageCalibration(budgetKey, prepared.sentChars, usage.inputTokens);
+                  if (debug) log15(`response done (non-stream): model=${route.modelId}${formatRelayUsage(usage)}`);
                 });
-              }
-              sendJson(res, 200, response);
-              audit({
-                transport: "http",
-                requestedModel: modelId,
-                dispatch: relayDispatch,
-                phase: "complete",
-                provider: route.providerId ?? "relay",
-                routeModel: route.modelId,
-                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
-                outcome: response.status === "incomplete" ? "error" : "ok",
-                status: response.status === "incomplete" ? "response.incomplete" : 200
-              });
-            } catch (err) {
-              const msg = formatUpstreamError(err);
-              const status = upstreamHttpStatus(err, msg);
-              audit({
-                transport: "http",
-                requestedModel: modelId,
-                dispatch: relayDispatch,
-                phase: "complete",
-                provider: route.providerId ?? "relay",
-                routeModel: route.modelId,
-                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
-                outcome: "error",
-                status
-              });
-              if (debug) log15(`sdk error: ${route.modelId}: ${msg}`);
-              sendJson(res, status, {
-                error: {
-                  message: msg,
-                  type: status === 429 ? "rate_limit_error" : "api_error",
-                  code: String(status)
+                if (debug) {
+                  appendCodexBodyDump({
+                    ts: localIsoTimestamp(),
+                    transport: "http",
+                    direction: "response",
+                    model: route.modelId,
+                    response
+                  });
                 }
-              });
+                sendJson(res, 200, response);
+                audit({
+                  transport: "http",
+                  requestedModel: modelId,
+                  dispatch: relayDispatch,
+                  phase: "complete",
+                  provider: route.providerId ?? "relay",
+                  routeModel: route.modelId,
+                  upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+                  outcome: response.status === "incomplete" ? "error" : "ok",
+                  status: response.status === "incomplete" ? "response.incomplete" : 200
+                });
+                break;
+              } catch (err) {
+                const msg = formatUpstreamError(err);
+                const kind = attempt === 0 && !v2Compaction ? relayRetryKind(msg) : void 0;
+                if (kind) {
+                  retryKind = kind;
+                  if (retryKind === "context") noteProviderOverflow(budgetKey, prepared.sentChars, msg);
+                  if (debug) log15(`${retryLogText(retryKind)} from provider; retrying once: model=${route.modelId}`);
+                  continue;
+                }
+                const status = upstreamHttpStatus(err, msg);
+                audit({
+                  transport: "http",
+                  requestedModel: modelId,
+                  dispatch: relayDispatch,
+                  phase: "complete",
+                  provider: route.providerId ?? "relay",
+                  routeModel: route.modelId,
+                  upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+                  outcome: "error",
+                  status
+                });
+                if (debug) log15(`sdk error: ${route.modelId}: ${msg}`);
+                sendJson(res, status, {
+                  error: overflowError(msg) ?? {
+                    message: msg,
+                    type: status === 429 ? "rate_limit_error" : "api_error",
+                    code: String(status)
+                  }
+                });
+                break;
+              }
             }
           }
         } catch (err) {
@@ -4862,7 +5596,7 @@ async function startCodexProxy(routes, options = {}) {
       sendJson(res, 404, { error: { message: "Not found", type: "invalid_request_error" } });
     });
     function wsAcceptKey(clientKey) {
-      return createHash2("sha1").update(clientKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+      return createHash4("sha1").update(clientKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
     }
     function wsDecodeFrame(buf) {
       if (buf.length < 2) return null;
@@ -4966,6 +5700,7 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
       );
       let frameBuf = Buffer.alloc(0);
       let fragmentedText;
+      let fragmentedBytes = 0;
       let externalActive = false;
       let poolActive = false;
       let nativeActive = false;
@@ -4973,6 +5708,7 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
       let nativeSendTurn;
       let socketClosing = false;
       const externalResponseStates = /* @__PURE__ */ new Map();
+      const socketAbort = new AbortController();
       let currentExternalCompletedResponse;
       let currentExternalStateInput;
       let currentExternalConsumedResponseId;
@@ -5064,11 +5800,19 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
             }
             if (!frame.fin) {
               fragmentedText = [frame.payload];
+              fragmentedBytes = frame.payload.length;
               continue;
             }
           } else if (frame.opcode === 0) {
             if (!fragmentedText) {
               socket.write(wsCloseFrame(1002));
+              socket.end();
+              return;
+            }
+            fragmentedBytes += frame.payload.length;
+            if (fragmentedBytes > MAX_CODEX_REQUEST_BYTES) {
+              fragmentedText = void 0;
+              socket.write(wsCloseFrame(1009));
               socket.end();
               return;
             }
@@ -5081,6 +5825,7 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
           }
           const frameText = frame.opcode === 0 ? Buffer.concat(fragmentedText ?? []).toString("utf8") : frame.payload.toString("utf8");
           fragmentedText = void 0;
+          fragmentedBytes = 0;
           if (externalActive || poolActive) {
             closeSocket(1008);
             return;
@@ -5169,6 +5914,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "i
                 return;
               }
               if (dispatch.kind === "native") {
+                noteNativeTurn(req.headers, body, modelId);
                 audit({
                   transport: "ws",
                   requestedModel: modelId,
@@ -5383,81 +6129,124 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
                 mixedNative,
                 headers: req.headers
               });
+              const conversationId = extractConversationId(req.headers, routedBody);
               const requestHeaders = openCodeGoHeaders(
                 route.providerId,
                 route.baseURL,
-                extractConversationId(req.headers, routedBody),
+                conversationId,
                 route.headers
               );
               currentExternalStateInput = responsesInputItems(routedBody.input);
               currentExternalConsumedResponseId = continuation.consumedResponseId;
-              let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
-                routedBody,
-                route.npm,
-                {
-                  providerId: route.providerId,
-                  apiBaseUrl: route.baseURL,
-                  supportedParameters: route.supportedParameters,
-                  reasoning: route.reasoning,
-                  interleavedReasoningField: route.interleavedReasoningField,
-                  reasoningEffortLevels: route.reasoningEffortLevels,
-                  reasoningEffortConflict: route.reasoningEffortConflict,
-                  upstreamModelId: route.upstreamModelId
-                },
-                {
-                  maxTools: maxToolsForNpm(route.npm),
-                  ...requestHeaders ? { requestHeaders } : {}
-                }
-              ), route));
-              if (route.contextWindow && route.contextWindow > 0) {
-                const before = params.messages.length;
-                const estimatedChars = estimateCodexRequestChars(params);
-                const compaction = isLikelyCodexCompactionRequest(body);
-                if (debug) log15(`WS context check: model=${route.modelId} window=${route.contextWindow} chars=${estimatedChars} compaction=${compaction ? "yes" : "no"} messages=${before} tools=${params.tools ? Object.keys(params.tools).length : 0}`);
-                params = protectCodexCompactionParams(body, params, route.contextWindow);
-                if (debug && params.messages.length < before) {
-                  log15(`WS context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages tools=${params.tools ? Object.keys(params.tools).length : 0}`);
-                }
-              }
+              const budgetKey = conversationKey(conversationId, httpBudgetFallbackKey(routedBody));
+              const label = routeLogLabel(modelId, route, relayDispatch);
               const v2Compaction = isCodexV2CompactionRequest(body);
-              if (v2Compaction) {
-                params = appendCompactionInstruction(params);
-                if (debug) log15(`WS compaction v2: synthesizing single compaction item for model=${route.modelId}`);
-              }
-              if (debug) {
-                const effort = body.reasoning?.effort;
-                log15(`WS model=${route.modelId} effort=${effort ?? "(none)"} maxOutputTokens=${String(params.maxOutputTokens ?? "(omitted)")} providerOptions=${JSON.stringify(params.providerOptions)}`);
-              }
-              if (v2Compaction) {
-                await streamCompactionResponse(languageModel, params, modelId, sendWsEvent);
-              } else
-                await streamResponsesResponse(languageModel, params, modelId, sendWsEvent, (summary) => {
-                  if (summary.errorMessage || summary.aborted || summary.incompleteReason) streamFailure = summary;
-                  if (debug) {
-                    const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.incompleteReason ? ` incomplete=${summary.incompleteReason}` : ""}${summary.finishReason ? ` finish=${summary.finishReason}` : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
-                    log15(`WS response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
+              const responseId = newResponseId();
+              if (!v2Compaction) writeResponsesCreated(modelId, responseId, sendWsEvent);
+              let retryKind;
+              for (let attempt = 0; attempt < 2; attempt++) {
+                const prepared = await prepareRelayBody(routedBody, {
+                  route,
+                  languageModel,
+                  key: budgetKey,
+                  label,
+                  log: log15,
+                  signal: socketAbort.signal,
+                  force: attempt > 0 && retryKind === "context",
+                  forceImages: attempt > 0 && retryKind === "image",
+                  stripImages: attempt > 0 && retryKind === "no-image"
+                });
+                if (socketAbort.signal.aborted) break;
+                let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
+                  prepared.body,
+                  route.npm,
+                  {
+                    providerId: route.providerId,
+                    apiBaseUrl: route.baseURL,
+                    supportedParameters: route.supportedParameters,
+                    reasoning: route.reasoning,
+                    interleavedReasoningField: route.interleavedReasoningField,
+                    reasoningEffortLevels: route.reasoningEffortLevels,
+                    reasoningEffortConflict: route.reasoningEffortConflict,
+                    upstreamModelId: route.upstreamModelId
+                  },
+                  {
+                    maxTools: maxToolsForNpm(route.npm),
+                    ...requestHeaders ? { requestHeaders } : {}
                   }
-                }, (progress) => {
-                  if (debug) {
-                    log15(`WS response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
+                ), route));
+                params = { ...params, providerOptions: withAnthropicThinkingDisplay(params.providerOptions, route) };
+                if (route.contextWindow && route.contextWindow > 0) {
+                  const before = params.messages.length;
+                  const estimatedChars = estimateCodexRequestChars(params);
+                  const compaction = isLikelyCodexCompactionRequest(body);
+                  if (debug) log15(`WS context check: model=${route.modelId} window=${route.contextWindow} chars=${estimatedChars} compaction=${compaction ? "yes" : "no"} messages=${before} tools=${params.tools ? Object.keys(params.tools).length : 0}`);
+                  params = protectCodexCompactionParams(body, params, route.contextWindow, charsPerToken(budgetKey));
+                  if (debug && params.messages.length < before) {
+                    log15(`WS context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages tools=${params.tools ? Object.keys(params.tools).length : 0}`);
                   }
-                }, { logLabel: routeLogLabel(modelId, route, relayDispatch) });
-              if (currentExternalCompletedResponse && currentExternalStateInput) {
-                if (currentExternalConsumedResponseId) {
-                  externalResponseStates.delete(currentExternalConsumedResponseId);
                 }
-                rememberExternalResponse(currentExternalCompletedResponse, v2Compaction ? [] : currentExternalStateInput);
+                if (v2Compaction) {
+                  params = appendCompactionInstruction(params);
+                  if (debug) log15(`WS compaction v2: synthesizing single compaction item for model=${route.modelId}`);
+                }
+                if (debug) {
+                  const effort = body.reasoning?.effort;
+                  log15(`WS model=${route.modelId} effort=${effort ?? "(none)"} maxOutputTokens=${String(params.maxOutputTokens ?? "(omitted)")} providerOptions=${JSON.stringify(params.providerOptions)}`);
+                }
+                const gate = createOverflowGate(sendWsEvent, attempt === 0 && !v2Compaction);
+                let usage;
+                let thrown;
+                streamFailure = void 0;
+                try {
+                  if (v2Compaction) {
+                    await streamCompactionResponse(languageModel, params, modelId, gate.write);
+                  } else
+                    await streamResponsesResponse(languageModel, params, modelId, gate.write, (summary) => {
+                      if (summary.errorMessage || summary.aborted || summary.incompleteReason) streamFailure = summary;
+                      usage = summary.usage;
+                      if (debug) {
+                        const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.incompleteReason ? ` incomplete=${summary.incompleteReason}` : ""}${summary.finishReason ? ` finish=${summary.finishReason}` : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
+                        log15(`WS response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}${formatRelayUsage(summary.usage)}`);
+                      }
+                    }, (progress) => {
+                      if (debug) {
+                        log15(`WS response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
+                      }
+                    }, { logLabel: label, responseId, skipCreated: true });
+                } catch (err) {
+                  const msg = formatUpstreamError(err);
+                  const status = upstreamHttpStatus(err, msg);
+                  thrown = { status };
+                  if (debug) log15(`WS sdk error: ${route.modelId}: ${msg}`);
+                  writeResponsesErrorStream(modelId, msg, gate.write, typeof status === "number" ? status : 500);
+                }
+                const held = gate.held();
+                if (held) {
+                  retryKind = held.kind;
+                  if (held.kind === "context") noteProviderOverflow(budgetKey, prepared.sentChars, held.message);
+                  if (debug) log15(`WS ${retryLogText(held.kind)} from provider; retrying once: model=${route.modelId}`);
+                  continue;
+                }
+                if (usage) recordUsageCalibration(budgetKey, prepared.sentChars, usage.inputTokens);
+                if (currentExternalCompletedResponse && currentExternalStateInput) {
+                  if (currentExternalConsumedResponseId) {
+                    externalResponseStates.delete(currentExternalConsumedResponseId);
+                  }
+                  rememberExternalResponse(currentExternalCompletedResponse, v2Compaction ? [] : currentExternalStateInput);
+                }
+                audit({
+                  transport: "ws",
+                  requestedModel: modelId,
+                  dispatch: relayDispatch,
+                  phase: "complete",
+                  provider: route.providerId ?? "relay",
+                  routeModel: route.modelId,
+                  upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+                  ...thrown ? { outcome: "error", status: thrown.status } : streamOutcome(streamFailure, "response.completed")
+                });
+                break;
               }
-              audit({
-                transport: "ws",
-                requestedModel: modelId,
-                dispatch: relayDispatch,
-                phase: "complete",
-                provider: route.providerId ?? "relay",
-                routeModel: route.modelId,
-                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
-                ...streamOutcome(streamFailure, "response.completed")
-              });
             } catch (err) {
               const msg = formatUpstreamError(err);
               const status = upstreamHttpStatus(err, msg);
@@ -5480,7 +6269,10 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
         }
       };
       socket.on("error", () => socket.destroy());
-      socket.once("close", () => externalResponseStates.clear());
+      socket.once("close", () => {
+        externalResponseStates.clear();
+        socketAbort.abort(new Error("client disconnected"));
+      });
       socket.on("data", onData);
       onData(head);
     });
@@ -7504,7 +8296,7 @@ function translateGeminiRequest(body, options = {}) {
   const nameToIdList = /* @__PURE__ */ new Map();
   const contents = body.contents || [];
   for (const turn of contents) {
-    const role = turn.role === "model" ? "assistant" : "user";
+    const role2 = turn.role === "model" ? "assistant" : "user";
     const parts = [];
     const toolResults = [];
     const turnParts = turn.parts || [];
@@ -7561,7 +8353,7 @@ function translateGeminiRequest(body, options = {}) {
     }
     if (parts.length > 0) {
       messages.push({
-        role,
+        role: role2,
         content: parts
       });
     }
@@ -8688,8 +9480,8 @@ function translateRequest(ccReq, options = {}) {
   }
   const contents = request2.contents || [];
   for (const msg of contents) {
-    const role = msg.role;
-    if (role === "system") {
+    const role2 = msg.role;
+    if (role2 === "system") {
       for (const part of msg.parts) {
         if (part.text) {
           systemInstructions.push(part.text);
@@ -8697,9 +9489,9 @@ function translateRequest(ccReq, options = {}) {
       }
       continue;
     }
-    const sdkRole = role === "model" ? "assistant" : "user";
+    const sdkRole = role2 === "model" ? "assistant" : "user";
     const hasFunctionCall = msg.parts.some((p17) => p17.functionCall);
-    const hasAssistantReasoning = role === "model" && msg.parts.some((p17) => p17.thought || p17.text?.includes("<thinking>"));
+    const hasAssistantReasoning = role2 === "model" && msg.parts.some((p17) => p17.thought || p17.text?.includes("<thinking>"));
     const hasComplexParts = msg.parts.some((p17) => p17.thought || p17.inlineData || p17.functionCall || p17.functionResponse);
     const singleText = msg.parts.length === 1 ? msg.parts[0]?.text : void 0;
     if (!hasComplexParts && singleText !== void 0 && !singleText.includes("<thinking>")) {
@@ -8711,7 +9503,7 @@ function translateRequest(ccReq, options = {}) {
     }
     const contentParts = [];
     const toolResults = [];
-    if (role === "model" && hasFunctionCall && !hasAssistantReasoning) {
+    if (role2 === "model" && hasFunctionCall && !hasAssistantReasoning) {
       const fallback = fallbackAssistantReasoning.shift();
       if (fallback?.trim()) {
         contentParts.push({ type: "reasoning", text: fallback });
@@ -10036,7 +10828,7 @@ async function startCloudCodeGateway(routes, opts = {}) {
           const baseProviderOptions = providerOptionsCache.get(route.catalogId);
           if (trace) log15(`[gateway]   provider options: ${JSON.stringify(baseProviderOptions ?? {})}`);
           const isStream = lowerUrl.includes("stream");
-          const conversationKey = conversationKeyFromRequest(parsed);
+          const conversationKey2 = conversationKeyFromRequest(parsed);
           const conversationSessionId = antigravityConversationId(parsed, req.headers);
           const optionsFor = (target) => {
             const requestHeaders = openCodeGoHeaders(
@@ -10053,7 +10845,7 @@ async function startCloudCodeGateway(routes, opts = {}) {
           const requestOptions = optionsFor(route);
           const rememberReasoning = (reasoning, answeredBy) => {
             if (!shouldEchoReasoningForRoute(answeredBy ?? route)) return;
-            rememberReasoningEcho(reasoningEchoesByConversation, conversationKey, reasoning);
+            rememberReasoningEcho(reasoningEchoesByConversation, conversationKey2, reasoning);
           };
           if (isStream) {
             handleStreamingRequest(res, route, baseProviderOptions, parsed, log15, {
@@ -10260,17 +11052,17 @@ function shouldEchoReasoningForRoute(route) {
   ].join(" ");
   return /deepseek|big[\s_-]?pickle|\bglm[\s_-]/i.test(routeIdentity);
 }
-function reasoningEchoOptionsForRoute(route, parsed, cache) {
+function reasoningEchoOptionsForRoute(route, parsed, cache2) {
   if (!shouldEchoReasoningForRoute(route)) return {};
-  const existing = cache.get(conversationKeyFromRequest(parsed));
+  const existing = cache2.get(conversationKeyFromRequest(parsed));
   return existing?.length ? { fallbackAssistantReasoning: existing } : {};
 }
-function rememberReasoningEcho(cache, key, reasoning) {
+function rememberReasoningEcho(cache2, key, reasoning) {
   const normalized = reasoning.trim();
   if (!normalized) return;
-  const existing = cache.get(key) ?? [];
+  const existing = cache2.get(key) ?? [];
   existing.push(normalized);
-  cache.set(key, existing.slice(-MAX_REASONING_ECHOES_PER_CONVERSATION));
+  cache2.set(key, existing.slice(-MAX_REASONING_ECHOES_PER_CONVERSATION));
 }
 async function handleCloudCodeForwardRequest(res, route, parsed, lowerUrl, log15) {
   const projectId = typeof route.providerData?.projectId === "string" ? route.providerData.projectId : "";
@@ -11364,7 +12156,7 @@ import {
 } from "fs";
 import { createRequire as createRequire2 } from "module";
 import { dirname as dirname3, join as join13 } from "path";
-import { createHash as createHash3, randomUUID as randomUUID5 } from "crypto";
+import { createHash as createHash5, randomUUID as randomUUID5 } from "crypto";
 import { parse, modify, applyEdits } from "jsonc-parser";
 var require3 = createRequire2(import.meta.url);
 var MODEL_PREFERENCES_KEY2 = "antigravityUnifiedStateSync.modelPreferences";
@@ -11379,7 +12171,7 @@ function getExistingIdeRecoveryRecordPath(env = process.env) {
   return join13(getAntigravityHome(env), "existing-ide-recovery.json");
 }
 function fileSha256(filePath) {
-  return createHash3("sha256").update(readFileSync6(filePath)).digest("hex");
+  return createHash5("sha256").update(readFileSync6(filePath)).digest("hex");
 }
 function readExistingIdeLock(env = process.env) {
   const lockPath = getExistingIdeLockPath(env);
@@ -13133,7 +13925,7 @@ import {
   statSync as statSync2
 } from "fs";
 import { basename as basename2, join as join17 } from "path";
-import { createHash as createHash4 } from "crypto";
+import { createHash as createHash6 } from "crypto";
 function getAppSessionLockPath(env = process.env) {
   return join17(getRelayAiCodexDir(env), "session-app.json");
 }
@@ -13144,7 +13936,7 @@ function getAppCatalogPath(providerId, env = process.env) {
   return join17(getRelayAiCodexDir(env), `app-models-${providerId}.json`);
 }
 function fileSha2562(path3) {
-  return createHash4("sha256").update(readFileSync10(path3)).digest("hex");
+  return createHash6("sha256").update(readFileSync10(path3)).digest("hex");
 }
 function readAppSessionLock(env = process.env) {
   const path3 = getAppSessionLockPath(env);
@@ -15320,6 +16112,26 @@ Common errors:
   404 unknown model (Codex favs)   ensure zen/go routes \u2014 use --provider zen explicitly
   DeepSeek tool loop 400           update relay-ai \u2014 reasoning round-trip in Codex proxy
   Codex shell network blocked      default is danger-full-access; check relay-ai codex --config
+  "prompt is too long" (Codex)     relay auto-summarizes and retries once; see CODEX CONTEXT MANAGEMENT
+  "image exceeds 10 MB maximum"    relay shrinks oversized images (optional sharp); update relay-ai
+  "Invalid JSON body" with images  gateway body-size cap; relay shrinks images and retries once
+  "not a multimodal model"         text-only model; relay removes images and retries once
+
+CODEX CONTEXT MANAGEMENT (relay routes in codex / codex-app)
+  \u2022 Auto-summarize: at ~85% of the model window, or after a model-vendor switch
+    (e.g. GPT -> Claude) with history above 50%, relay summarizes the oldest
+    history with the same model, keeps recent turns, tool-call pairs, AGENTS.md /
+    environment context, and history-only tool definitions. The summary is reused
+    byte-for-byte on later turns (prompt cache stays warm).
+  \u2022 Switch: RELAY_AI_AUTO_SUMMARIZE=off|overflow|all (default all).
+  \u2022 Provider "prompt too long" -> one summarize-and-retry, then Codex receives
+    context_length_exceeded (no 5x retry loop).
+  \u2022 Images over Claude's 10 MB base64 cap are shrunk (long edge 2576/1568 px);
+    without the optional sharp package they become a short text note.
+  \u2022 Other models: images over 3 MB shrink to 2048 px, all images in one request
+    stay under 7 MB; "Invalid JSON body" / 413 / "too large" -> one smaller retry.
+  \u2022 Live Claude thinking streams into the app on anthropic / claude-code /
+    vertex-anthropic routes; --trace logs usage=in out cacheRead cacheWrite.
 
 Human-readable guide: docs/AI-AGENTS.md in the relay-ai repo.
 
@@ -18088,7 +18900,7 @@ Options:
       return 0;
     }
     if (parsed.uiAction === "stop") {
-      const { stopUiServer } = await import("./ui-command-GZWEMO4C.js");
+      const { stopUiServer } = await import("./ui-command-FGYI7SRF.js");
       const result = await stopUiServer();
       if (result.stopped) {
         console.log(`
@@ -18101,11 +18913,11 @@ Options:
 `);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-GZWEMO4C.js");
+    const { runUiCommand } = await import("./ui-command-FGYI7SRF.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode, background: parsed.uiBackground });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-KE5ABMVP.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-GIEHEECW.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

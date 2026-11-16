@@ -23,8 +23,9 @@ import {
   recordUsageCalibration,
   parseContextOverflow,
   parseImageTooLarge,
+  parseImageUnsupported,
 } from './codex-context-budget.js';
-import { fitImagesInInput, imagePolicyForRoute, REACTIVE_IMAGE_POLICY } from './image-fit.js';
+import { fitImagesInInput, imagePolicyForRoute, reactiveImagePolicyForRoute, stripImagesInInput } from './image-fit.js';
 import { applySummaryCheckpoint, autoSummarizeMode, buildSummaryParams, hasMatchingCheckpoint } from './codex-auto-summarize.js';
 import { providerKind } from './registry/provider-kind.js';
 import { localTimestamp } from './trace-log.js';
@@ -574,6 +575,29 @@ export interface RelayBodyContext {
   force?: boolean;
   /** Retry after a provider rejected an image: shrink oversized images on any route. */
   forceImages?: boolean;
+  /** Retry after the model refused images entirely: remove them (remembered per model). */
+  stripImages?: boolean;
+}
+
+/** Why a failed attempt is retried once: overflow, image too large, or images unsupported. */
+export type RelayRetryKind = 'context' | 'image' | 'no-image';
+
+/** Route model ids that refused images this session; later turns drop images up front. */
+const textOnlyModels = new Set<string>();
+
+export function relayRetryKind(message: string, code?: string): RelayRetryKind | undefined {
+  if (code === 'context_length_exceeded' || overflowError(message)) return 'context';
+  if (parseImageUnsupported(message)) return 'no-image';
+  if (parseImageTooLarge(message)) return 'image';
+  return undefined;
+}
+
+function retryLogText(kind: RelayRetryKind): string {
+  return kind === 'context' ? 'context overflow' : kind === 'image' ? 'image too large' : 'model cannot read images';
+}
+
+export function __resetTextOnlyModelsForTests(): void {
+  textOnlyModels.clear();
 }
 
 /**
@@ -590,13 +614,21 @@ export async function prepareRelayBody(
   let next: Record<string, unknown> = lifted.input === body.input && !Array.isArray(body.tools)
     ? { ...body }
     : { ...body, input: lifted.input, ...(lifted.tools.length || Array.isArray(body.tools) ? { tools: lifted.tools } : {}) };
-  const imagePolicy = ctx.forceImages ? REACTIVE_IMAGE_POLICY : imagePolicyForRoute(ctx.route);
-  if (imagePolicy) {
-    const fitted = await fitImagesInInput(next.input as ResponsesInputItem[], imagePolicy, { resizeOversizedDimensions: Boolean(ctx.forceImages) });
-    if (fitted.input !== next.input) {
-      next = { ...next, input: fitted.input };
-      process.stderr.write(`[relay-ai] ${localTimestamp()} ${ctx.label}: resized ${fitted.resized} / omitted ${fitted.omitted} oversized image(s)\n`);
+  if (ctx.stripImages) textOnlyModels.add(ctx.route.modelId);
+  if (textOnlyModels.has(ctx.route.modelId)) {
+    const stripped = stripImagesInInput(next.input as ResponsesInputItem[]);
+    if (stripped.removed > 0) {
+      next = { ...next, input: stripped.input };
+      process.stderr.write(`[relay-ai] ${localTimestamp()} ${ctx.label}: removed ${stripped.removed} image(s) — this model can't read images\n`);
+      ctx.log(`images removed: model=${ctx.route.modelId} removed=${stripped.removed} (text-only model)`);
     }
+  }
+  const imagePolicy = ctx.forceImages ? reactiveImagePolicyForRoute(ctx.route) : imagePolicyForRoute(ctx.route);
+  const fitted = await fitImagesInInput(next.input as ResponsesInputItem[], imagePolicy, { resizeOversizedDimensions: Boolean(ctx.forceImages) });
+  if (fitted.input !== next.input) {
+    next = { ...next, input: fitted.input };
+    process.stderr.write(`[relay-ai] ${localTimestamp()} ${ctx.label}: resized ${fitted.resized} / omitted ${fitted.omitted} oversized image(s)\n`);
+    ctx.log(`images fitted: model=${ctx.route.modelId} resized=${fitted.resized} omitted=${fitted.omitted} forced=${Boolean(ctx.forceImages)}`);
   }
   const family = routeFamily(ctx.route);
   const { previous } = noteModelFamily(ctx.key, family);
@@ -668,7 +700,7 @@ export function noteProviderOverflow(key: string, sentChars: number, message: st
  */
 export function createOverflowGate(write: (chunk: string) => void, armed: boolean) {
   let decided = !armed;
-  let held: { kind: 'context' | 'image'; message: string } | undefined;
+  let held: { kind: RelayRetryKind; message: string } | undefined;
   return {
     write(chunk: string) {
       if (decided) { write(chunk); return; }
@@ -677,8 +709,9 @@ export function createOverflowGate(write: (chunk: string) => void, armed: boolea
         try {
           const parsed = JSON.parse(data?.slice(6) ?? '{}') as { response?: { error?: { code?: string; message?: string } } };
           const message = parsed.response?.error?.message ?? '';
-          if (parsed.response?.error?.code === 'context_length_exceeded' || parseImageTooLarge(message)) {
-            held = { kind: parsed.response?.error?.code === 'context_length_exceeded' ? 'context' : 'image', message };
+          const kind = relayRetryKind(message, parsed.response?.error?.code);
+          if (kind) {
+            held = { kind, message };
             decided = true;
             return;
           }
@@ -688,7 +721,7 @@ export function createOverflowGate(write: (chunk: string) => void, armed: boolea
       write(chunk);
     },
     /** The held failure, if this attempt ended in a retryable overflow or image refusal. */
-    held(): { kind: 'context' | 'image'; message: string } | undefined { return held; },
+    held(): { kind: RelayRetryKind; message: string } | undefined { return held; },
   };
 }
 
@@ -1132,10 +1165,11 @@ export async function startCodexProxy(
             }
             return params;
           };
-          let retryKind: 'context' | 'image' | undefined;
+          let retryKind: RelayRetryKind | undefined;
           const prepare = (attempt: number) => prepareRelayBody(routedBody, {
             route, languageModel, key: budgetKey, label, log, signal: abort.signal,
             force: attempt > 0 && retryKind === 'context', forceImages: attempt > 0 && retryKind === 'image',
+                stripImages: attempt > 0 && retryKind === 'no-image',
           });
 
           if (body.stream) {
@@ -1207,7 +1241,7 @@ export async function startCodexProxy(
               if (held) {
                 retryKind = held.kind;
                 if (held.kind === 'context') noteProviderOverflow(budgetKey, prepared.sentChars, held.message);
-                if (debug) log(`${held.kind === 'context' ? 'context overflow' : 'image too large'} from provider; retrying once: model=${route.modelId}`);
+                if (debug) log(`${retryLogText(held.kind)} from provider; retrying once: model=${route.modelId}`);
                 continue;
               }
               if (usage) recordUsageCalibration(budgetKey, prepared.sentChars, usage.inputTokens);
@@ -1263,10 +1297,11 @@ export async function startCodexProxy(
                 break;
               } catch (err) {
                 const msg = formatUpstreamError(err);
-                if (attempt === 0 && !v2Compaction && (overflowError(msg) || parseImageTooLarge(msg))) {
-                  retryKind = overflowError(msg) ? 'context' : 'image';
+                const kind = attempt === 0 && !v2Compaction ? relayRetryKind(msg) : undefined;
+                if (kind) {
+                  retryKind = kind;
                   if (retryKind === 'context') noteProviderOverflow(budgetKey, prepared.sentChars, msg);
-                  if (debug) log(`${retryKind === 'context' ? 'context overflow' : 'image too large'} from provider; retrying once: model=${route.modelId}`);
+                  if (debug) log(`${retryLogText(retryKind)} from provider; retrying once: model=${route.modelId}`);
                   continue;
                 }
                 const status = upstreamHttpStatus(err, msg);
@@ -1872,11 +1907,12 @@ export async function startCodexProxy(
             const v2Compaction = isCodexV2CompactionRequest(body);
             const responseId = newResponseId();
             if (!v2Compaction) writeResponsesCreated(modelId, responseId, sendWsEvent);
-            let retryKind: 'context' | 'image' | undefined;
+            let retryKind: RelayRetryKind | undefined;
             for (let attempt = 0; attempt < 2; attempt++) {
               const prepared = await prepareRelayBody(routedBody, {
                 route, languageModel, key: budgetKey, label, log, signal: socketAbort.signal,
                 force: attempt > 0 && retryKind === 'context', forceImages: attempt > 0 && retryKind === 'image',
+                stripImages: attempt > 0 && retryKind === 'no-image',
               });
               if (socketAbort.signal.aborted) break;
               let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
@@ -1947,7 +1983,7 @@ export async function startCodexProxy(
               if (held) {
                 retryKind = held.kind;
                 if (held.kind === 'context') noteProviderOverflow(budgetKey, prepared.sentChars, held.message);
-                if (debug) log(`WS ${held.kind === 'context' ? 'context overflow' : 'image too large'} from provider; retrying once: model=${route.modelId}`);
+                if (debug) log(`WS ${retryLogText(held.kind)} from provider; retrying once: model=${route.modelId}`);
                 continue;
               }
               if (usage) recordUsageCalibration(budgetKey, prepared.sentChars, usage.inputTokens);

@@ -16,18 +16,18 @@ import {
   recordPoolActivity,
   resolveLocalProviderApiKey,
   retryPoolFailure
-} from "./chunk-RPTGNMJP.js";
+} from "./chunk-KFN6FIVD.js";
 import {
   copilotPlanTier,
   filterCachedCopilotModels,
   stripGoogleModelPrefix
-} from "./chunk-5IM432XT.js";
+} from "./chunk-SPGBIVJG.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
 import {
   formatUpstreamError
-} from "./chunk-IRMXZJ3D.js";
+} from "./chunk-WHW3PFHG.js";
 import {
   REGISTRY_SCHEMA_VERSION,
   buildCodexReasoningLevels,
@@ -58,11 +58,11 @@ import {
   sseChunk,
   streamActivity,
   thinkingProviderOptions
-} from "./chunk-HWZBCTO3.js";
+} from "./chunk-EQV5336U.js";
 import {
   isProviderKind,
   resolveProviderOAuthProviderData
-} from "./chunk-VWAB7443.js";
+} from "./chunk-JHMI5LJT.js";
 
 // src/core/pool-model.ts
 import { randomUUID as randomUUID2 } from "crypto";
@@ -317,6 +317,105 @@ var CodexRetryGuard = class {
     }
   }
 };
+
+// src/codex-context-budget.ts
+var DEFAULT_CHARS_PER_TOKEN = 3;
+var IMAGE_CHAR_WEIGHT = 4e3;
+var MIN_CALIBRATION_TOKENS = 1e3;
+var MIN_CHARS_PER_TOKEN = 1;
+var MAX_CHARS_PER_TOKEN = 6;
+var MAX_KEYS = 256;
+var DATA_IMAGE_URL = /data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi;
+function isImagePart(o) {
+  const type = o["type"];
+  if (type === "input_image" || type === "image" || type === "image-data" || type === "image_url") return true;
+  const media = o["mediaType"] ?? o["media_type"] ?? o["mimeType"];
+  return (type === "file" || type === "file-data" || type === "media") && typeof media === "string" && media.startsWith("image");
+}
+function stringChars(s) {
+  if (s.length < 64 || !s.includes("base64,")) return s.length;
+  let images = 0;
+  const stripped = s.replace(DATA_IMAGE_URL, () => {
+    images++;
+    return "";
+  });
+  return stripped.length + images * IMAGE_CHAR_WEIGHT;
+}
+function estimateValueChars(value) {
+  if (value === null || value === void 0) return 0;
+  if (typeof value === "string") return stringChars(value);
+  if (typeof value === "number" || typeof value === "boolean") return String(value).length;
+  if (Array.isArray(value)) {
+    let n = 2;
+    for (const v of value) n += estimateValueChars(v) + 1;
+    return n;
+  }
+  if (typeof value === "object") {
+    const o = value;
+    if (isImagePart(o)) return IMAGE_CHAR_WEIGHT;
+    let n = 2;
+    for (const [k, v] of Object.entries(o)) n += k.length + 3 + estimateValueChars(v) + 1;
+    return n;
+  }
+  return 0;
+}
+function estimateInputItemChars(item) {
+  return estimateValueChars(item);
+}
+function estimateResponsesBodyChars(body) {
+  let chars = typeof body.instructions === "string" ? body.instructions.length : 0;
+  if (body.tools !== void 0) chars += estimateValueChars(body.tools);
+  const input = body.input;
+  if (typeof input === "string") chars += input.length;
+  else if (Array.isArray(input)) for (const item of input) chars += estimateInputItemChars(item);
+  return chars;
+}
+var calibration = /* @__PURE__ */ new Map();
+var families = /* @__PURE__ */ new Map();
+function touch(map, key, value) {
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > MAX_KEYS) {
+    const oldest = map.keys().next().value;
+    if (oldest === void 0) break;
+    map.delete(oldest);
+  }
+}
+function charsPerToken(key) {
+  return key !== void 0 && calibration.get(key) || DEFAULT_CHARS_PER_TOKEN;
+}
+function recordUsageCalibration(key, sentChars, inputTokens) {
+  if (key === void 0 || !(inputTokens >= MIN_CALIBRATION_TOKENS) || !(sentChars > 0)) return;
+  const ratio = Math.min(MAX_CHARS_PER_TOKEN, Math.max(MIN_CHARS_PER_TOKEN, sentChars / inputTokens));
+  touch(calibration, key, ratio);
+}
+var num = (s) => s === void 0 ? void 0 : Number(s);
+function parseContextOverflow(message) {
+  const anthropic = message.match(/prompt is too long:\s*(\d+)\s*tokens\s*>\s*(\d+)\s*maximum/i);
+  if (anthropic) return { actualTokens: num(anthropic[1]), maxTokens: num(anthropic[2]) };
+  const openai = message.match(/maximum context length is (\d+) tokens[\s\S]*?(\d+) tokens/i);
+  if (openai) return { maxTokens: num(openai[1]), actualTokens: num(openai[2]) };
+  const gemini = message.match(/input token count \((\d+)\) exceeds the maximum number of tokens allowed \((\d+)\)/i);
+  if (gemini) return { actualTokens: num(gemini[1]), maxTokens: num(gemini[2]) };
+  if (/context_length_exceeded|exceeds the maximum number of tokens|input is too long|exceeds the context window|prompt is too long/i.test(message)) {
+    return {};
+  }
+  return void 0;
+}
+function conversationKey(conversationId, fallback) {
+  return conversationId ?? fallback;
+}
+function noteModelFamily(key, family) {
+  const previous = families.get(key);
+  touch(families, key, family);
+  return previous === void 0 ? {} : { previous };
+}
+function parseImageUnsupported(message) {
+  return /not a multimodal model|does not support (?:image|vision|multimodal)|(?:image|vision) (?:input )?(?:is |are )?not supported|no endpoints found that support image input|images? (?:are|is) not supported/i.test(message);
+}
+function parseImageTooLarge(message) {
+  return /image exceeds|image too large|image dimensions exceed|image size exceeds|request entity too large|payload too large|request too large|body too large|invalid json body|\(HTTP 413\)/i.test(message);
+}
 
 // src/codex-responses-adapter.ts
 import { createHash as createHash2 } from "crypto";
@@ -746,6 +845,17 @@ function newItemId(prefix) {
 function functionCallItemId(upstreamId) {
   return upstreamId.startsWith("fc_") ? upstreamId : newItemId("fc");
 }
+function relayUsageFrom(u) {
+  return {
+    inputTokens: u?.inputTokens ?? 0,
+    outputTokens: u?.outputTokens ?? 0,
+    cacheReadTokens: u?.inputTokenDetails?.cacheReadTokens ?? 0,
+    cacheWriteTokens: u?.inputTokenDetails?.cacheWriteTokens ?? 0
+  };
+}
+function formatRelayUsage(u) {
+  return u ? ` usage=in:${u.inputTokens} out:${u.outputTokens} cacheRead:${u.cacheReadTokens} cacheWrite:${u.cacheWriteTokens}` : "";
+}
 function usageFromPart(part) {
   const input = part.totalUsage?.inputTokens ?? 0;
   const output = part.totalUsage?.outputTokens ?? 0;
@@ -828,12 +938,19 @@ function trackRepetition(current, prev) {
   const stale = tail.length === REPEAT_TAIL_CHARS && tail === prev.tail && grew;
   return { tail, len: current.length, streak: stale ? prev.streak + 1 : 0 };
 }
+function writeResponsesCreated(modelId, responseId, write) {
+  write(sseChunk("response.created", {
+    type: "response.created",
+    response: { id: responseId, object: "response", model: modelId, created_at: Math.floor(Date.now() / 1e3), status: "in_progress", output: [] }
+  }));
+}
 async function writeResponsesStream(fullStream, modelId, write, onDone, onProgress, options) {
   const emit = (type, data) => write(sseChunk(type, data));
-  const responseId = newResponseId();
+  const responseId = options?.responseId ?? newResponseId();
   const createdAt = Math.floor(Date.now() / 1e3);
   let usage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
-  emit("response.created", {
+  let relayUsage;
+  if (!options?.skipCreated) emit("response.created", {
     type: "response.created",
     response: {
       id: responseId,
@@ -856,12 +973,58 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
   const recentPartCounts = /* @__PURE__ */ new Map();
   let reasoningItemId = null;
   let reasoningText = "";
+  let reasoningBlockText = "";
   let reasoningOutputIndex = 0;
+  const reasoningItems = [];
   const outputItems = [];
   let reasoningRepeat = INITIAL_REPEAT_TRACKER;
   let textRepeat = INITIAL_REPEAT_TRACKER;
   let loopDetected;
   let finishReason;
+  const openReasoningBlock = () => {
+    reasoningItemId = newItemId("rs");
+    reasoningOutputIndex = outputIndex++;
+    reasoningBlockText = "";
+    emit("response.output_item.added", {
+      type: "response.output_item.added",
+      output_index: reasoningOutputIndex,
+      item: { id: reasoningItemId, type: "reasoning", summary: [] }
+    });
+    emit("response.reasoning_summary_part.added", {
+      type: "response.reasoning_summary_part.added",
+      item_id: reasoningItemId,
+      output_index: reasoningOutputIndex,
+      summary_index: 0,
+      part: { type: "summary_text", text: "" }
+    });
+  };
+  const closeReasoningBlock = () => {
+    if (!reasoningItemId) return;
+    const id = reasoningItemId;
+    emit("response.reasoning_summary_text.done", {
+      type: "response.reasoning_summary_text.done",
+      item_id: id,
+      output_index: reasoningOutputIndex,
+      summary_index: 0,
+      text: reasoningBlockText
+    });
+    emit("response.reasoning_summary_part.done", {
+      type: "response.reasoning_summary_part.done",
+      item_id: id,
+      output_index: reasoningOutputIndex,
+      summary_index: 0,
+      part: { type: "summary_text", text: reasoningBlockText }
+    });
+    const item = makeReasoningOutputItem(id, reasoningBlockText);
+    emit("response.output_item.done", {
+      type: "response.output_item.done",
+      output_index: reasoningOutputIndex,
+      item
+    });
+    reasoningItems.push(item);
+    reasoningItemId = null;
+    reasoningBlockText = "";
+  };
   const ensureTextItem = () => {
     if (!textItemId) {
       textItemId = newItemId("msg");
@@ -934,28 +1097,27 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
     recentPartCounts.set(part.type, (recentPartCounts.get(part.type) ?? 0) + 1);
     switch (part.type) {
       case "reasoning-start":
-        reasoningText = "";
-        reasoningItemId = newItemId("rs");
-        reasoningOutputIndex = outputIndex++;
-        emit("response.output_item.added", {
-          type: "response.output_item.added",
-          output_index: reasoningOutputIndex,
-          item: { id: reasoningItemId, type: "reasoning", summary: [] }
-        });
+        closeReasoningBlock();
+        openReasoningBlock();
         break;
-      case "reasoning-delta":
-        if (!reasoningItemId) {
-          reasoningItemId = newItemId("rs");
-          reasoningOutputIndex = outputIndex++;
-          emit("response.output_item.added", {
-            type: "response.output_item.added",
+      case "reasoning-delta": {
+        if (!reasoningItemId) openReasoningBlock();
+        const delta = part.text ?? "";
+        reasoningText += delta;
+        reasoningBlockText += delta;
+        if (delta) {
+          emit("response.reasoning_summary_text.delta", {
+            type: "response.reasoning_summary_text.delta",
+            item_id: reasoningItemId,
             output_index: reasoningOutputIndex,
-            item: { id: reasoningItemId, type: "reasoning", summary: [] }
+            summary_index: 0,
+            delta
           });
         }
-        reasoningText += part.text ?? "";
         break;
+      }
       case "reasoning-end":
+        closeReasoningBlock();
         break;
       case "text-start":
         textFull = "";
@@ -996,7 +1158,10 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
         break;
       case "finish":
         if (part.finishReason) finishReason = part.finishReason;
-        if (part.totalUsage) usage = usageFromPart(part);
+        if (part.totalUsage) {
+          usage = usageFromPart(part);
+          relayUsage = relayUsageFrom(part.totalUsage);
+        }
         break;
       case "abort": {
         const msg = `stream aborted: ${part.reason ?? "no data received from provider"}`;
@@ -1027,6 +1192,7 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
       }
       case "error": {
         const msg = formatUpstreamError(part.error);
+        const overflow = parseContextOverflow(msg);
         const is429 = msg.includes("429") || part.error && typeof part.error === "object" && (part.error.statusCode === 429 || part.error.lastError?.statusCode === 429);
         process.stderr.write(`[relay-ai] ${localTimestamp()} ${options?.logLabel ?? modelId}: ${msg}
 `);
@@ -1038,7 +1204,8 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
           toolNames: toolStates.map((t) => t.name),
           loopDetected,
           errorMessage: msg,
-          errorStatus: part.error?.statusCode
+          errorStatus: part.error?.statusCode,
+          ...overflow ? { contextOverflow: overflow } : {}
         });
         emit("response.failed", {
           type: "response.failed",
@@ -1049,7 +1216,7 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
             created_at: createdAt,
             status: "failed",
             output: [],
-            error: { message: msg, type: is429 ? "rate_limit_error" : "api_error", ...is429 ? { code: "429" } : {} }
+            error: overflowError(msg) ?? { message: msg, type: is429 ? "rate_limit_error" : "api_error", ...is429 ? { code: "429" } : {} }
           }
         });
         return;
@@ -1173,15 +1340,8 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
     });
     outputItems.push(textItem);
   }
-  if (reasoningItemId) {
-    const reasoningItem = makeReasoningOutputItem(reasoningItemId, reasoningText);
-    emit("response.output_item.done", {
-      type: "response.output_item.done",
-      output_index: reasoningOutputIndex,
-      item: reasoningItem
-    });
-    outputItems.unshift(reasoningItem);
-  }
+  closeReasoningBlock();
+  outputItems.unshift(...reasoningItems);
   for (const tool2 of incompleteReason ? [] : toolStates) {
     const normalizedArgs = normalizeCodexSubagentArguments(tool2.name, tool2.args);
     emit("response.function_call_arguments.done", {
@@ -1210,7 +1370,8 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
     loopDetected,
     dsmlToolCallsRecovered: dsml?.calls.length,
     finishReason,
-    incompleteReason
+    incompleteReason,
+    ...relayUsage ? { usage: relayUsage } : {}
   });
   const terminalEvent = incompleteReason ? "response.incomplete" : "response.completed";
   emit(terminalEvent, {
@@ -1287,7 +1448,9 @@ async function streamResponsesResponse(model, params, modelId, write, onDone, on
       await writeResponsesStream(watchedStream, modelId, write, onDone, onProgress, {
         onForceStop: (reason) => abort.abort(new Error(reason)),
         toolContext,
-        logLabel: options?.logLabel
+        logLabel: options?.logLabel,
+        responseId: options?.responseId,
+        skipCreated: options?.skipCreated
       });
     } finally {
       active = false;
@@ -1296,7 +1459,7 @@ async function streamResponsesResponse(model, params, modelId, write, onDone, on
     }
   });
 }
-async function generateResponsesResponse(model, params, modelId) {
+async function generateResponsesResponse(model, params, modelId, onUsage) {
   const { toolContext, ...sdkParams } = params;
   const r = await generateTextStreamingIfRequired({ model, ...sdkParams, maxRetries: 0 });
   const incompleteReason = incompleteReasonForFinish(r.finishReason);
@@ -1332,6 +1495,7 @@ async function generateResponsesResponse(model, params, modelId) {
   }
   const inputTokens = r.usage?.inputTokens ?? 0;
   const outputTokens = r.usage?.outputTokens ?? 0;
+  if (r.usage) onUsage?.(relayUsageFrom(r.usage));
   return {
     id: responseId,
     object: "response",
@@ -1360,8 +1524,8 @@ function decodeCompactionContent(encrypted) {
     return null;
   }
 }
-function makeCompactionItem(summary) {
-  return { type: "compaction", id: newItemId("cmp"), encrypted_content: encodeCompactionContent(summary) };
+function makeCompactionItem(summary, id = newItemId("cmp")) {
+  return { type: "compaction", id, encrypted_content: encodeCompactionContent(summary) };
 }
 function appendCompactionInstruction(params) {
   return {
@@ -1395,6 +1559,39 @@ async function collectCompactionSummary(model, params) {
   }
   if (firstStreamError) throw firstStreamError.error;
   return text;
+}
+async function collectSummaryText(model, params, signal) {
+  const idle = new AbortController();
+  let timer = setTimeout(() => idle.abort(new Error("summary: no data from provider for 120s")), STREAM_IDLE_TIMEOUT_MS);
+  const abortSignal = signal ? AbortSignal.any([signal, idle.signal]) : idle.signal;
+  const { toolContext: _toolContext, ...sdkParams } = params;
+  void _toolContext;
+  let firstStreamError;
+  try {
+    const result = streamText({
+      model,
+      ...sdkParams,
+      maxRetries: 0,
+      abortSignal,
+      onError: (event) => {
+        firstStreamError ??= event.error;
+      }
+    });
+    Promise.resolve(result.toolResults).catch(() => {
+    });
+    let text = "";
+    for await (const delta of result.textStream) {
+      text += delta;
+      clearTimeout(timer);
+      timer = setTimeout(() => idle.abort(new Error("summary: no data from provider for 120s")), STREAM_IDLE_TIMEOUT_MS);
+    }
+    if (firstStreamError) throw firstStreamError;
+    if (abortSignal.aborted) throw abortSignal.reason;
+    if (!text.trim()) throw new Error("summary: provider returned an empty summary");
+    return text;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 function buildCompactionResponseBody(summary, modelId) {
   return {
@@ -1437,8 +1634,11 @@ function responsesErrorBody(modelId, message, statusCode = 401) {
     created_at: Math.floor(Date.now() / 1e3),
     status: "failed",
     output: [],
-    error: { message, type: statusCode === 429 ? "rate_limit_error" : "api_error", code: String(statusCode) }
+    error: overflowError(message) ?? { message, type: statusCode === 429 ? "rate_limit_error" : "api_error", code: String(statusCode) }
   };
+}
+function overflowError(message) {
+  return parseContextOverflow(message) ? { message, type: "invalid_request_error", code: "context_length_exceeded" } : void 0;
 }
 function writeResponsesErrorStream(modelId, message, write, statusCode = 401) {
   write(sseChunk("response.failed", {
@@ -1451,7 +1651,7 @@ function writeResponsesErrorStream(modelId, message, write, statusCode = 401) {
 var IMAGE_INPUT_TOKENS = 4096;
 var IMAGE_PART_TYPES = /* @__PURE__ */ new Set(["image", "image-data", "image-url"]);
 var MEDIA_PART_TYPES = /* @__PURE__ */ new Set(["file", "media", "file-data"]);
-function isImagePart(part) {
+function isImagePart2(part) {
   if (typeof part.type !== "string") return false;
   if (IMAGE_PART_TYPES.has(part.type)) return true;
   return MEDIA_PART_TYPES.has(part.type) && typeof part.mediaType === "string" && part.mediaType.startsWith("image");
@@ -1465,7 +1665,7 @@ function withoutBinary(value, found) {
   if (value === null || typeof value !== "object") return value;
   const record = value;
   if (typeof record.toJSON === "function") return withoutBinary(record.toJSON(), found);
-  if (isImagePart(record)) {
+  if (isImagePart2(record)) {
     found.images += 1;
     return { type: "image" };
   }
@@ -2839,7 +3039,7 @@ function wrapPoolError(error) {
 }
 var sessions = new PoolSessionRoutes();
 async function memberModel(routeId, context) {
-  const { createRelayModel } = await import("./model-S2NQMQSQ.js");
+  const { createRelayModel } = await import("./model-KYMGG2FF.js");
   return createRelayModel(routeId, {
     sessionId: context.sessionId,
     ...context.options?.onDebug ? { onDebug: context.options.onDebug } : {},
@@ -3152,13 +3352,31 @@ export {
   lazyPoolRoute,
   sdkPoolRoute,
   poolRequestFitsWindow,
+  estimateValueChars,
+  estimateInputItemChars,
+  estimateResponsesBodyChars,
+  charsPerToken,
+  recordUsageCalibration,
+  parseContextOverflow,
+  conversationKey,
+  noteModelFamily,
+  parseImageUnsupported,
+  parseImageTooLarge,
+  liftAdditionalToolsInput,
   translateResponsesRequest,
+  newResponseId,
+  formatRelayUsage,
+  writeResponsesCreated,
   streamResponsesResponse,
   generateResponsesResponse,
+  COMPACTION_SUMMARY_INSTRUCTION,
   decodeCompactionContent,
+  makeCompactionItem,
   appendCompactionInstruction,
+  collectSummaryText,
   generateCompactionResponse,
   streamCompactionResponse,
+  overflowError,
   writeResponsesErrorStream,
   poolRouteKey,
   poolMemberEffort,
@@ -3192,4 +3410,4 @@ export {
   parseRelayRouteId,
   loadCoreRegistry
 };
-//# sourceMappingURL=chunk-OKSVQXT5.js.map
+//# sourceMappingURL=chunk-7PT2Z5MH.js.map

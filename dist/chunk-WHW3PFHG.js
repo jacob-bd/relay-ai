@@ -57,7 +57,8 @@ function formatUpstreamError(err) {
   if (rec.responseBody) {
     try {
       const parsed = JSON.parse(rec.responseBody);
-      const providerMessage = parsed.error?.message ?? (typeof parsed.detail === "string" ? parsed.detail : void 0);
+      const listed = Array.isArray(parsed.errors) ? parsed.errors.find((e) => typeof e?.message === "string")?.message : void 0;
+      const providerMessage = typeof parsed.error === "string" ? parsed.error : parsed.error?.message ?? listed ?? (typeof parsed.detail === "string" ? parsed.detail : void 0);
       if (providerMessage) {
         const short = joinProviderMessage(providerMessage);
         return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
@@ -139,4 +140,4 @@ export {
   upstreamHttpStatus,
   anthropicErrorType
 };
-//# sourceMappingURL=chunk-IRMXZJ3D.js.map
+//# sourceMappingURL=chunk-WHW3PFHG.js.map

@@ -40,7 +40,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.22.6",
+  version: "0.22.7",
   publishConfig: {
     access: "public"
   },
@@ -134,7 +134,8 @@ var package_default = {
     vitest: "^4.1.10"
   },
   optionalDependencies: {
-    "@napi-rs/keyring": "^1.3.0"
+    "@napi-rs/keyring": "^1.3.0",
+    sharp: "^0.35.5"
   },
   overrides: {
     ws: "^8.21.0"
@@ -2449,4 +2450,4 @@ export {
   saveToCredentialStore,
   isSecretServiceAvailable
 };
-//# sourceMappingURL=chunk-VWAB7443.js.map
+//# sourceMappingURL=chunk-JHMI5LJT.js.map

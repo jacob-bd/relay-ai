@@ -59,3 +59,16 @@ describe('parseArgs --ai', () => {
     });
   });
 });
+
+describe('ai-doc Codex context management', () => {
+  it('documents auto-summarize, its switch, and image shrinking', () => {
+    const doc = generateAiDoc();
+    expect(doc).toContain('CODEX CONTEXT MANAGEMENT');
+    expect(doc).toContain('RELAY_AI_AUTO_SUMMARIZE=off|overflow|all');
+    expect(doc).toContain('context_length_exceeded');
+    expect(doc).toContain('image exceeds 10 MB maximum');
+    expect(doc).toContain('Invalid JSON body');
+    expect(doc).toContain('not a multimodal model');
+    expect(doc).toContain('all images in one request');
+  });
+});

@@ -88,9 +88,13 @@ export function formatUpstreamError(err: unknown): string {
 
   if (rec.responseBody) {
     try {
-      const parsed = JSON.parse(rec.responseBody) as { error?: { message?: string }; detail?: unknown };
-      // chatgpt.com/backend-api answers with {"detail": "..."} instead of {"error": {...}}.
-      const providerMessage = parsed.error?.message ?? (typeof parsed.detail === 'string' ? parsed.detail : undefined);
+      const parsed = JSON.parse(rec.responseBody) as { error?: { message?: string } | string; errors?: Array<{ message?: unknown }>; detail?: unknown };
+      // chatgpt.com/backend-api answers with {"detail": "..."}; some gateways with
+      // {"error": "..."} or {"errors": [{"message": "..."}]}.
+      const listed = Array.isArray(parsed.errors) ? parsed.errors.find(e => typeof e?.message === 'string')?.message as string | undefined : undefined;
+      const providerMessage = typeof parsed.error === 'string'
+        ? parsed.error
+        : parsed.error?.message ?? listed ?? (typeof parsed.detail === 'string' ? parsed.detail : undefined);
       if (providerMessage) {
         const short = joinProviderMessage(providerMessage);
         return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;

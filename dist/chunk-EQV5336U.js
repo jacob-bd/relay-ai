@@ -17,7 +17,7 @@ import {
   isProviderKind,
   providerKind,
   selectBetaFlags
-} from "./chunk-VWAB7443.js";
+} from "./chunk-JHMI5LJT.js";
 import {
   hasApplicationDefaultCredentials,
   loadVertexModelEntries,
@@ -3634,7 +3634,7 @@ function classifyProtocolFailure(error) {
   if (status === 401 || status === 403 || status === 429 || /invalid (api )?key|authentication|quota|billing|not in plan|model_not_in_plan/.test(lower)) {
     return { retryable: false, status, reason: "authentication or quota failure" };
   }
-  if (/context (length|window)|too many tokens|maximum context|invalid tool|tool schema|moderation/.test(lower)) {
+  if (/context (length|window)|too many tokens|maximum context|prompt is too long|input is too long|exceeds the maximum number of tokens|image exceeds|image too large|invalid tool|tool schema|moderation/.test(lower)) {
     return { retryable: false, status, reason: "request content was rejected" };
   }
   const explicitProtocol = status === 405 || status === 415 || status !== void 0 && [400, 404, 422].includes(status) && /endpoint|method|protocol|messages|chat\/completions|chat completions|anthropic/.test(lower);
@@ -4565,6 +4565,21 @@ function isClaudeReasoningModel(modelId) {
   const minor = m[2] !== void 0 ? Number(m[2]) : 0;
   return major > 4 || major === 4 && minor >= 6;
 }
+var FIRST_PARTY_ANTHROPIC_KINDS = /* @__PURE__ */ new Set(["anthropic", "claude-code", "vertex-anthropic"]);
+function withAnthropicThinkingDisplay(providerOptions, route) {
+  const kind = providerKind(route.providerId?.trim().toLowerCase() ?? "");
+  const firstParty = FIRST_PARTY_ANTHROPIC_KINDS.has(kind) || route.npm === VERTEX_ANTHROPIC_NPM;
+  const sep = route.modelId.lastIndexOf("__");
+  const model = route.upstreamModelId ?? (sep >= 0 ? route.modelId.slice(sep + 2) : route.modelId);
+  if (!firstParty || !isClaudeReasoningModel(model)) return providerOptions;
+  const anthropic = providerOptions?.anthropic ?? {};
+  const thinking = anthropic.thinking ?? {};
+  if (thinking.type !== void 0 && thinking.type !== "adaptive") return providerOptions;
+  return {
+    ...providerOptions ?? {},
+    anthropic: { ...anthropic, thinking: { ...thinking, type: "adaptive", display: "summarized" } }
+  };
+}
 function stripGeminiRoutePrefix(modelId) {
   const trimmed = modelId.toLowerCase().trim();
   const sep = trimmed.indexOf("__");
@@ -4651,6 +4666,16 @@ function isGlm52ReasoningModel(modelId) {
 var GLM_53_REASONING_ID = /^(?:[a-z0-9-]+\/)?glm-?5\.3(?:-|$)/;
 function isGlm53ReasoningModel(modelId) {
   return GLM_53_REASONING_ID.test(modelId.toLowerCase().trim());
+}
+var QWEN_REASONING_ID = /^(?:[a-z0-9-]+\/)?qwen(?:3|[4-9])(?:[.\-_]|$)/;
+var QWEN_NON_THINKING_ID = /instruct|coder|embed|rerank/;
+var QWEN_EFFORT_LEVELS = ["none", "low", "medium", "high"];
+function isQwenReasoningModel(modelId) {
+  const lower = modelId.toLowerCase().trim();
+  return QWEN_REASONING_ID.test(lower) && !QWEN_NON_THINKING_ID.test(lower);
+}
+function qwenRuleApplies(npm, modelId, metadata) {
+  return npm === "@ai-sdk/openai-compatible" && metadata?.reasoning !== false && !metadata?.reasoningEffortConflict && !(metadata?.reasoningEffortLevels && metadata.reasoningEffortLevels.length > 0) && isQwenReasoningModel(modelId);
 }
 function toCamelCase(str) {
   return str.replace(/[-_]([a-z])/g, (_, g) => g.toUpperCase());
@@ -5123,6 +5148,17 @@ function resolveRawReasoningCapabilities(npm, modelId, metadata) {
       };
     }
   }
+  if (qwenRuleApplies(npm, modelId, metadata)) {
+    return {
+      levels: [...QWEN_EFFORT_LEVELS],
+      defaultLevel: "high",
+      supportsSummaries: false,
+      mode: "controllable",
+      source: "provider-rule",
+      confidence: "documented",
+      wireFormat: { kind: "openai-reasoning-effort" }
+    };
+  }
   if (hasSupportedParameter(metadata, "reasoning_effort")) {
     return {
       levels: ["low", "medium", "high", "xhigh"],
@@ -5280,6 +5316,12 @@ function effortProviderOptions(npm, effort, modelId, metadata) {
         const key = metadata?.providerId ? toCamelCase(metadata.providerId) : "openaiCompatible";
         return { [key]: { reasoningEffort: effort } };
       }
+    }
+    if (qwenRuleApplies(npm, modelId, metadata)) {
+      const reasoningEffort = effort === "off" ? "none" : effort;
+      if (!QWEN_EFFORT_LEVELS.includes(reasoningEffort)) return void 0;
+      const key = metadata?.providerId ? toCamelCase(metadata.providerId) : "openaiCompatible";
+      return { [key]: { reasoningEffort } };
     }
     if (hasSupportedParameter(metadata, "reasoning_effort")) {
       const reasoningEffort = mapCodexEffortToOpenAICompatible(effort);
@@ -5452,6 +5494,7 @@ export {
   applyGoogleThinkingLevelToBody,
   withProviderRequestDefaults,
   createLanguageModel,
+  withAnthropicThinkingDisplay,
   isGeminiHydrogenModel,
   mapCodexEffortToGeminiHydrogenLevel,
   getReasoningCapabilities,
@@ -5460,4 +5503,4 @@ export {
   deepMergeProviderOptions,
   thinkingProviderOptions
 };
-//# sourceMappingURL=chunk-HWZBCTO3.js.map
+//# sourceMappingURL=chunk-EQV5336U.js.map
