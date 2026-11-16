@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Codex relay auto-summarize (#94, #95).** When a request would exceed ~85% of the model's window, or a chat switches model family with a large history, relay summarizes the oldest history with the same model and keeps recent turns, tool-call pairs, host context (AGENTS.md, environment) and history-only tool definitions intact. The summary is saved per conversation and reused byte-for-byte while it fits, so prompt caching keeps working. `RELAY_AI_AUTO_SUMMARIZE=off|overflow|all` (default `all`).
+- **Live Claude thinking in the Codex app (#93).** Reasoning summaries now stream as they arrive (they were buffered until the turn ended), and first-party Claude routes request `thinking.display: "summarized"` (Opus 4.7+ defaults to hidden).
+- **Prompt-cache usage in Codex trace logs (#92):** `usage=in out cacheRead cacheWrite` on every relay response line, streaming and non-streaming.
+- **Oversized images are shrunk instead of failing the turn.** Images over Claude's 10 MB base64 limit are resized deterministically with the optional `sharp` dependency (long edge 2576/1568 px); without `sharp` they become a short text note. Any provider's image-size refusal triggers one shrink-and-retry.
+
+### Fixed
+
+- **Codex no longer retries an oversized prompt five times (#95).** "Prompt is too long" now reaches Codex as `context_length_exceeded` on stream, thrown-error and non-stream paths; relay first summarizes and retries once under the same response id.
+- **The context guard counts tool definitions and learns real token density (#95).** It previously ignored ~120k tokens of tool schemas and assumed 3 chars/token, so a 1.2M-token chat (1.95M chars) was sent untrimmed. Images nested in tool results are counted as images, not base64 text.
+- **Compaction trimming no longer counts the tools it strips.**
+- **Large Codex WebSocket history frames are accepted** (cap raised from 4 MB to 32 MB, enforced across fragments).
+- **"Prompt too long" and image-size errors are never retried on the other protocol** by dual-protocol gateways.
+
 ## [0.22.6] - 2026-11-12
 
 ### Added

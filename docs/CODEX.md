@@ -518,6 +518,23 @@ When Codex does trigger compaction, it sends a `{"type":"compaction_trigger"}` r
 
 If a conversation that already exceeds the safety threshold arrives at the proxy (e.g. after switching from a GPT-5.5 session to a 1 M-limit model mid-way through), relay-ai drops the oldest messages before forwarding — enough to bring the estimated token count below 85% of the model's context window. The session continues in a degraded but functional state rather than crashing.
 
+**4. Relay auto-summarize (relay routes)**
+
+The truncation above is a last resort. Before it, relay summarizes old history itself, for both `relay-ai codex` and the app:
+
+- **When:** the request is estimated above 85% of the model's window, or the chat just switched model family (for example GPT → Claude) with history above 50% of the new window. The estimate counts tool definitions and learns each chat's real characters-per-token ratio from provider usage (code/JSON-heavy chats run ~1.6, not 3). If the provider still answers "prompt is too long", relay summarizes and retries **once** under the same response id; if that fails too, Codex gets a `context_length_exceeded` error instead of retrying five times.
+- **How:** the oldest part of the chat is rendered as plain text and summarized by the same model (no tools, no thinking options, 4,000-token cap, 120 s idle timeout). Tool calls stay together with their results, your AGENTS.md / environment context and developer messages are kept verbatim, and tool definitions that only lived in old history are kept. The summary is saved per conversation and reused byte-for-byte on later turns until the chat outgrows it, so the provider's prompt cache stays warm.
+- **Turn it off or limit it:** `RELAY_AI_AUTO_SUMMARIZE=off` (never), `=overflow` (only when too big, not on model switches), default `all`.
+- The terminal shows `summarized N earlier items (~XK → ~YK tokens, reason=…)` when it happens.
+
+### Oversized images
+
+Claude rejects any single image over 10 MB of base64 (`image exceeds 10 MB maximum`). Relay shrinks such images before sending — long edge 2576 px for Opus 4.7+/Sonnet 5+ (1568 px for older Claude), PNG kept when it fits, otherwise JPEG — using the optional `sharp` package. The result is identical every turn (cached by hash), so prompt caching is unaffected. If `sharp` is not installed, the image is replaced with `[image omitted: WxH image exceeds this model's size limit]` so the turn still works. Other providers get the same shrink-and-retry-once if they reject an image.
+
+### Live thinking and cache usage in logs
+
+Claude Opus 4.7+ hides its thinking by default, which made the app show a silent "thinking" for minutes. On first-party Claude routes (`anthropic`, `claude-code`, `vertex-anthropic`) relay requests summarized thinking and streams it into the app as it arrives. With `--trace`, every response line in `~/.relay-ai/logs/codex-proxy-debug.log` ends with `usage=in:<n> out:<n> cacheRead:<n> cacheWrite:<n>`.
+
 ### "Custom" label in the Codex App model picker
 
 When relay-ai configures Codex to use an external model via `model_catalog_json` and a custom `openai_base_url`, Codex App displays the model with a **"Custom"** label in the UI (e.g. "Custom · Medium"). This is expected Codex App behavior for any model loaded from a catalog that isn't in Codex's built-in provider list. The actual model relay-ai selected is in use — the label is cosmetic.
