@@ -1325,3 +1325,37 @@ describe('translateResponsesRequest app-injected function_call_output', () => {
     expect(out.messages.some(m => m.role === 'tool')).toBe(false);
   });
 });
+
+describe('relay usage reporting (#92)', () => {
+  it('writeResponsesStream reports usage incl. cache read/write in onDone', async () => {
+    const { writeResponsesStream } = await import('../src/codex-responses-adapter.js');
+    async function* stream() {
+      yield { type: 'text-start', id: 't1' };
+      yield { type: 'text-delta', id: 't1', text: 'hi' };
+      yield { type: 'text-end', id: 't1' };
+      yield {
+        type: 'finish',
+        finishReason: 'stop',
+        totalUsage: { inputTokens: 1000, outputTokens: 50, inputTokenDetails: { cacheReadTokens: 900, cacheWriteTokens: 80 } },
+      };
+    }
+    let summary: { usage?: unknown } | undefined;
+    await writeResponsesStream(stream() as never, 'test-model', () => {}, s => { summary = s; });
+    expect(summary?.usage).toEqual({ inputTokens: 1000, outputTokens: 50, cacheReadTokens: 900, cacheWriteTokens: 80 });
+  });
+
+  it('generateResponsesResponse calls onUsage', async () => {
+    const { generateResponsesResponse } = await import('../src/codex-responses-adapter.js');
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => ({
+        content: [{ type: 'text', text: 'ok' }],
+        finishReason: { unified: 'stop', raw: 'stop' },
+        usage: { inputTokens: { total: 500, noCache: 100, cacheRead: 300, cacheWrite: 100 }, outputTokens: { total: 7, text: 7, reasoning: 0 } },
+        warnings: [],
+      }),
+    });
+    let usage: unknown;
+    await generateResponsesResponse(model, { messages: [{ role: 'user', content: [{ type: 'text', text: 'q' }] }] } as never, 'm', u => { usage = u; });
+    expect(usage).toEqual({ inputTokens: 500, outputTokens: 7, cacheReadTokens: 300, cacheWriteTokens: 100 });
+  });
+});

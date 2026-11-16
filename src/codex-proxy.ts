@@ -20,6 +20,7 @@ import {
   streamResponsesResponse,
   generateResponsesResponse,
   writeResponsesErrorStream,
+  formatRelayUsage,
   appendCompactionInstruction,
   streamCompactionResponse,
   generateCompactionResponse,
@@ -973,7 +974,7 @@ export async function startCodexProxy(
                 if (summary.errorMessage || summary.aborted || summary.incompleteReason) streamFailure = summary;
                 if (debug) {
                   const failure = `${summary.aborted ? ' aborted=yes' : ''}${summary.incompleteReason ? ` incomplete=${summary.incompleteReason}` : ''}${summary.finishReason ? ` finish=${summary.finishReason}` : ''}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ''}`;
-                  log(`response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(',')}] loopDetected=${summary.loopDetected ?? 'no'} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
+                  log(`response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(',')}] loopDetected=${summary.loopDetected ?? 'no'} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}${formatRelayUsage(summary.usage)}`);
                 }
               }, progress => {
                 if (debug) {
@@ -1002,7 +1003,9 @@ export async function startCodexProxy(
             try {
               const response = v2Compaction
                 ? await generateCompactionResponse(languageModel, params, modelId)
-                : await generateResponsesResponse(languageModel, params, modelId);
+                : await generateResponsesResponse(languageModel, params, modelId, usage => {
+                  if (debug) log(`response done (non-stream): model=${route.modelId}${formatRelayUsage(usage)}`);
+                });
               if (debug) {
                 appendCodexBodyDump({
                   ts: localIsoTimestamp(),
@@ -1647,7 +1650,7 @@ export async function startCodexProxy(
               if (summary.errorMessage || summary.aborted || summary.incompleteReason) streamFailure = summary;
               if (debug) {
                 const failure = `${summary.aborted ? ' aborted=yes' : ''}${summary.incompleteReason ? ` incomplete=${summary.incompleteReason}` : ''}${summary.finishReason ? ` finish=${summary.finishReason}` : ''}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ''}`;
-                log(`WS response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(',')}] loopDetected=${summary.loopDetected ?? 'no'} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
+                log(`WS response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(',')}] loopDetected=${summary.loopDetected ?? 'no'} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}${formatRelayUsage(summary.usage)}`);
               }
             }, progress => {
               if (debug) {

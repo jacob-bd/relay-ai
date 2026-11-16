@@ -791,6 +791,34 @@ interface ResponsesUsage {
   input_tokens_details?: { cached_tokens: number };
 }
 
+/** Token usage for relay logs and context calibration (#92). `inputTokens` includes cached tokens. */
+export interface RelayUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+type SdkUsageLike = {
+  inputTokens?: number;
+  outputTokens?: number;
+  inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
+} | undefined;
+
+function relayUsageFrom(u: SdkUsageLike): RelayUsage {
+  return {
+    inputTokens: u?.inputTokens ?? 0,
+    outputTokens: u?.outputTokens ?? 0,
+    cacheReadTokens: u?.inputTokenDetails?.cacheReadTokens ?? 0,
+    cacheWriteTokens: u?.inputTokenDetails?.cacheWriteTokens ?? 0,
+  };
+}
+
+/** Log suffix shared by the HTTP and WS relay paths. */
+export function formatRelayUsage(u: RelayUsage | undefined): string {
+  return u ? ` usage=in:${u.inputTokens} out:${u.outputTokens} cacheRead:${u.cacheReadTokens} cacheWrite:${u.cacheWriteTokens}` : '';
+}
+
 function usageFromPart(part: FullStreamPart): ResponsesUsage {
   const input = part.totalUsage?.inputTokens ?? 0;
   const output = part.totalUsage?.outputTokens ?? 0;
@@ -922,6 +950,8 @@ export interface ResponsesStreamSummary {
   errorStatus?: number;
   finishReason?: string;
   incompleteReason?: 'max_output_tokens' | 'content_filter';
+  /** Provider usage from the finish part, when the provider reported one. */
+  usage?: RelayUsage;
 }
 
 function incompleteReasonForFinish(finishReason?: string): ResponsesStreamSummary['incompleteReason'] {
@@ -999,6 +1029,7 @@ export async function writeResponsesStream(
   const responseId = newResponseId();
   const createdAt = Math.floor(Date.now() / 1000);
   let usage: ResponsesUsage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+  let relayUsage: RelayUsage | undefined;
 
   emit('response.created', {
     type: 'response.created',
@@ -1183,7 +1214,10 @@ export async function writeResponsesStream(
         break;
       case 'finish':
         if (part.finishReason) finishReason = part.finishReason;
-        if (part.totalUsage) usage = usageFromPart(part);
+        if (part.totalUsage) {
+          usage = usageFromPart(part);
+          relayUsage = relayUsageFrom(part.totalUsage as SdkUsageLike);
+        }
         break;
 
       case 'abort': {
@@ -1422,6 +1456,7 @@ export async function writeResponsesStream(
     dsmlToolCallsRecovered: dsml?.calls.length,
     finishReason,
     incompleteReason,
+    ...(relayUsage ? { usage: relayUsage } : {}),
   });
 
   const terminalEvent = incompleteReason ? 'response.incomplete' : 'response.completed';
@@ -1530,6 +1565,7 @@ export async function generateResponsesResponse(
   model: LanguageModel,
   params: CodexSdkCallParams,
   modelId: string,
+  onUsage?: (usage: RelayUsage) => void,
 ): Promise<Record<string, unknown>> {
   const { toolContext, ...sdkParams } = params;
   const r = await generateTextStreamingIfRequired({ model, ...sdkParams, maxRetries: 0 } as Parameters<typeof generateText>[0]);
@@ -1571,6 +1607,7 @@ export async function generateResponsesResponse(
 
   const inputTokens = r.usage?.inputTokens ?? 0;
   const outputTokens = r.usage?.outputTokens ?? 0;
+  if (r.usage) onUsage?.(relayUsageFrom(r.usage as SdkUsageLike));
 
   return {
     id: responseId,
