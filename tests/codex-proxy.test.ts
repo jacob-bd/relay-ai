@@ -1643,3 +1643,24 @@ describe('buildCatalogFile', () => {
     expect(catalog.models[1]!.priority).toBe(1);
   });
 });
+
+describe('estimateCodexRequestChars counts tools and discounts nested images (#95)', () => {
+  it('includes tool definitions', async () => {
+    const { estimateCodexRequestChars: est } = await import('../src/codex-proxy.js');
+    const params = { messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], tools: { big: { description: 'd'.repeat(20_000) } } };
+    expect(est(params as never)).toBeGreaterThanOrEqual(20_000);
+  });
+  it('weights images inside tool results as one image', async () => {
+    const { estimateCodexRequestChars: est } = await import('../src/codex-proxy.js');
+    const params = { messages: [{ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c', toolName: 't', output: { type: 'content', value: [{ type: 'image-data', data: 'A'.repeat(2_000_000), mediaType: 'image/png' }] } }] }] };
+    expect(est(params as never)).toBeLessThan(10_000);
+  });
+  it('compaction trimming ignores the tools it strips', async () => {
+    const { protectCodexCompactionParams: protect } = await import('../src/codex-proxy.js');
+    const body = { input: [{ role: 'user', content: [{ type: 'input_text', text: 'You are performing a CONTEXT CHECKPOINT COMPACTION. Summarize.' }] }] };
+    const params = { messages: Array.from({ length: 10 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: [{ type: 'text', text: `m${i} ${'w'.repeat(10_000)}` }] })), tools: { huge: { description: 'z'.repeat(200_000) } } };
+    const out = protect(body, params as never, 100_000);
+    expect(out.messages).toHaveLength(10);
+    expect(out.tools).toBeUndefined();
+  });
+});

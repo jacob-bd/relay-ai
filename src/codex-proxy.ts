@@ -14,6 +14,7 @@ import {
   codexAppModelSlug,
 } from './codex/app-profile.js';
 import { createLanguageModel, maxToolsForNpm, withAnthropicThinkingDisplay, type VertexProviderConfig } from './provider-factory.js';
+import { estimateValueChars } from './codex-context-budget.js';
 import { applyClaudeCodeOAuthIdentity } from './oauth/claude-code-identity.js';
 import {
   translateResponsesRequest,
@@ -128,33 +129,20 @@ export function isExternalToolContinuation(input: unknown): input is ResponsesIn
 }
 
 /**
- * An image part costs a few thousand vision tokens, not the megabytes of base64
- * it carries. Counting the base64 would make the context guard trim (and clip)
- * conversations that actually fit the model's window.
+ * Chars sent upstream: instructions, tool definitions (the Codex app sends
+ * ~120k tokens of them), and messages. Images anywhere — including inside tool
+ * results — count as a few thousand vision tokens, not their base64 length
+ * (see estimateValueChars), so the guard neither misses tools nor over-trims.
  */
-const IMAGE_PART_CHAR_WEIGHT = 4_000;
-
-function isImageContentPart(part: Record<string, unknown>): boolean {
-  if (part['type'] === 'image') return true;
-  return part['type'] === 'file'
-    && typeof part['mediaType'] === 'string'
-    && part['mediaType'].startsWith('image');
-}
-
 export function estimateCodexRequestChars(params: CodexSdkCallParams): number {
   let chars = (params.instructions ?? '').length;
+  if (params.tools) chars += estimateValueChars(params.tools);
   for (const msg of params.messages) {
     if (Array.isArray(msg.content)) {
       for (const part of msg.content) {
         if (!part || typeof part !== 'object') continue;
         const p = part as Record<string, unknown>;
-        if (typeof p['text'] === 'string') {
-          chars += p['text'].length;
-        } else if (isImageContentPart(p)) {
-          chars += IMAGE_PART_CHAR_WEIGHT;
-        } else {
-          chars += JSON.stringify(part).length;
-        }
+        chars += estimateValueChars(typeof p['text'] === 'string' ? p['text'] : part);
       }
     } else if (typeof msg.content === 'string') {
       chars += msg.content.length;
@@ -162,6 +150,7 @@ export function estimateCodexRequestChars(params: CodexSdkCallParams): number {
   }
   return chars;
 }
+
 
 function clipTextForContext(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
@@ -314,12 +303,14 @@ export function protectCodexCompactionParams(
   body: Record<string, unknown>,
   params: CodexSdkCallParams,
   contextWindow: number,
+  charsPerToken = 3,
 ): CodexSdkCallParams {
   if (!isLikelyCodexCompactionRequest(body)) {
-    return trimToContextLimit(params, contextWindow);
+    return trimToContextLimit(params, contextWindow, Math.floor(contextWindow * 0.85 * charsPerToken));
   }
-  const clipped = clipLargeTextParts(params, 12_000);
-  const compactCharLimit = Math.floor(contextWindow * CODEX_APP_AUTO_COMPACT_RATIO) * 3;
+  // Tools are dropped below, so they must not count against the trim budget.
+  const clipped = clipLargeTextParts({ ...params, tools: undefined }, 12_000);
+  const compactCharLimit = Math.floor(contextWindow * CODEX_APP_AUTO_COMPACT_RATIO * charsPerToken);
   const trimmed = trimToContextLimit(clipped, contextWindow, compactCharLimit);
   // Codex's remote compaction v2 expects exactly one plain-text summary item back.
   // Leaving tools available invites an agentic model to keep calling them instead

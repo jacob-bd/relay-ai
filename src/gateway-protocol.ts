@@ -144,7 +144,7 @@ export function classifyProtocolFailure(error: unknown): ProtocolFailure {
     || /invalid (api )?key|authentication|quota|billing|not in plan|model_not_in_plan/.test(lower)) {
     return { retryable: false, status, reason: 'authentication or quota failure' };
   }
-  if (/context (length|window)|too many tokens|maximum context|invalid tool|tool schema|moderation/.test(lower)) {
+  if (/context (length|window)|too many tokens|maximum context|prompt is too long|input is too long|exceeds the maximum number of tokens|image exceeds|image too large|invalid tool|tool schema|moderation/.test(lower)) {
     return { retryable: false, status, reason: 'request content was rejected' };
   }
 
