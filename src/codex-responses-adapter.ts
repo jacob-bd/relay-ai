@@ -1053,14 +1053,64 @@ export async function writeResponsesStream(
   const streamStartedAt = Date.now();
   let lastProgressAt = streamStartedAt;
   const recentPartCounts = new Map<string, number>();
+  // reasoningText accumulates every reasoning block (stats, loop detection);
+  // the open block streams its own summary text live (#93).
   let reasoningItemId: string | null = null;
   let reasoningText = '';
+  let reasoningBlockText = '';
   let reasoningOutputIndex = 0;
+  const reasoningItems: ResponsesReasoningItem[] = [];
   const outputItems: unknown[] = [];
   let reasoningRepeat = INITIAL_REPEAT_TRACKER;
   let textRepeat = INITIAL_REPEAT_TRACKER;
   let loopDetected: 'reasoning' | 'text' | undefined;
   let finishReason: string | undefined;
+
+  const openReasoningBlock = () => {
+    reasoningItemId = newItemId('rs');
+    reasoningOutputIndex = outputIndex++;
+    reasoningBlockText = '';
+    emit('response.output_item.added', {
+      type: 'response.output_item.added',
+      output_index: reasoningOutputIndex,
+      item: { id: reasoningItemId, type: 'reasoning', summary: [] },
+    });
+    emit('response.reasoning_summary_part.added', {
+      type: 'response.reasoning_summary_part.added',
+      item_id: reasoningItemId,
+      output_index: reasoningOutputIndex,
+      summary_index: 0,
+      part: { type: 'summary_text', text: '' },
+    });
+  };
+
+  const closeReasoningBlock = () => {
+    if (!reasoningItemId) return;
+    const id = reasoningItemId;
+    emit('response.reasoning_summary_text.done', {
+      type: 'response.reasoning_summary_text.done',
+      item_id: id,
+      output_index: reasoningOutputIndex,
+      summary_index: 0,
+      text: reasoningBlockText,
+    });
+    emit('response.reasoning_summary_part.done', {
+      type: 'response.reasoning_summary_part.done',
+      item_id: id,
+      output_index: reasoningOutputIndex,
+      summary_index: 0,
+      part: { type: 'summary_text', text: reasoningBlockText },
+    });
+    const item = makeReasoningOutputItem(id, reasoningBlockText);
+    emit('response.output_item.done', {
+      type: 'response.output_item.done',
+      output_index: reasoningOutputIndex,
+      item,
+    });
+    reasoningItems.push(item);
+    reasoningItemId = null;
+    reasoningBlockText = '';
+  };
 
   const ensureTextItem = (): string => {
     if (!textItemId) {
@@ -1143,30 +1193,29 @@ export async function writeResponsesStream(
     recentPartCounts.set(part.type, (recentPartCounts.get(part.type) ?? 0) + 1);
     switch (part.type) {
       case 'reasoning-start':
-        reasoningText = '';
-        reasoningItemId = newItemId('rs');
-        reasoningOutputIndex = outputIndex++;
-        emit('response.output_item.added', {
-          type: 'response.output_item.added',
-          output_index: reasoningOutputIndex,
-          item: { id: reasoningItemId, type: 'reasoning', summary: [] },
-        });
+        closeReasoningBlock();
+        openReasoningBlock();
         break;
 
-      case 'reasoning-delta':
-        if (!reasoningItemId) {
-          reasoningItemId = newItemId('rs');
-          reasoningOutputIndex = outputIndex++;
-          emit('response.output_item.added', {
-            type: 'response.output_item.added',
+      case 'reasoning-delta': {
+        if (!reasoningItemId) openReasoningBlock();
+        const delta = part.text ?? '';
+        reasoningText += delta;
+        reasoningBlockText += delta;
+        if (delta) {
+          emit('response.reasoning_summary_text.delta', {
+            type: 'response.reasoning_summary_text.delta',
+            item_id: reasoningItemId,
             output_index: reasoningOutputIndex,
-            item: { id: reasoningItemId, type: 'reasoning', summary: [] },
+            summary_index: 0,
+            delta,
           });
         }
-        reasoningText += part.text ?? '';
         break;
+      }
 
       case 'reasoning-end':
+        closeReasoningBlock();
         break;
 
       case 'text-start':
@@ -1412,15 +1461,8 @@ export async function writeResponsesStream(
     outputItems.push(textItem);
   }
 
-  if (reasoningItemId) {
-    const reasoningItem = makeReasoningOutputItem(reasoningItemId, reasoningText);
-    emit('response.output_item.done', {
-      type: 'response.output_item.done',
-      output_index: reasoningOutputIndex,
-      item: reasoningItem,
-    });
-    outputItems.unshift(reasoningItem);
-  }
+  closeReasoningBlock();
+  outputItems.unshift(...reasoningItems);
 
   // Codex executes output_item.done calls before the terminal response event.
   // Never commit a tool batch from an incomplete generation: partial custom

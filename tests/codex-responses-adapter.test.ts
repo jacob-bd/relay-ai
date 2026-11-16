@@ -1359,3 +1359,71 @@ describe('relay usage reporting (#92)', () => {
     expect(usage).toEqual({ inputTokens: 500, outputTokens: 7, cacheReadTokens: 300, cacheWriteTokens: 100 });
   });
 });
+
+describe('live reasoning summaries (#93)', () => {
+  async function run(parts: Array<Record<string, unknown>>) {
+    const { writeResponsesStream } = await import('../src/codex-responses-adapter.js');
+    const chunks: string[] = [];
+    async function* stream() { for (const p of parts) yield p; }
+    await writeResponsesStream(stream() as never, 'test-model', c => chunks.push(c));
+    return parseSseEvents(chunks.join(''));
+  }
+  const finish = { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 1, outputTokens: 1 } };
+
+  it('streams reasoning summary deltas as they arrive', async () => {
+    const events = await run([
+      { type: 'reasoning-start', id: 'r1' },
+      { type: 'reasoning-delta', id: 'r1', text: 'Let me ' },
+      { type: 'reasoning-delta', id: 'r1', text: 'think' },
+      { type: 'reasoning-end', id: 'r1' },
+      { type: 'text-start', id: 't1' },
+      { type: 'text-delta', id: 't1', text: 'answer' },
+      { type: 'text-end', id: 't1' },
+      finish,
+    ]);
+    const names = events.map(e => e.event);
+    const deltas = events.filter(e => e.event === 'response.reasoning_summary_text.delta').map(e => e.data.delta);
+    expect(deltas).toEqual(['Let me ', 'think']);
+    expect(names.indexOf('response.reasoning_summary_part.added')).toBeGreaterThan(-1);
+    expect(names.indexOf('response.reasoning_summary_text.delta')).toBeLessThan(names.indexOf('response.output_text.delta'));
+    const reasoningDone = events.findIndex(e => e.event === 'response.output_item.done' && e.data.item.type === 'reasoning');
+    expect(reasoningDone).toBeLessThan(names.indexOf('response.output_text.delta'));
+    const completed = events.find(e => e.event === 'response.completed')!.data.response;
+    expect(completed.output[0]).toEqual(expect.objectContaining({ type: 'reasoning', summary: [{ type: 'summary_text', text: 'Let me think' }] }));
+  });
+
+  it('two reasoning blocks produce two closed reasoning items', async () => {
+    const events = await run([
+      { type: 'reasoning-start', id: 'a' },
+      { type: 'reasoning-delta', id: 'a', text: 'first' },
+      { type: 'reasoning-end', id: 'a' },
+      { type: 'reasoning-start', id: 'b' },
+      { type: 'reasoning-delta', id: 'b', text: 'second' },
+      { type: 'reasoning-end', id: 'b' },
+      { type: 'text-start', id: 't1' },
+      { type: 'text-delta', id: 't1', text: 'ok' },
+      { type: 'text-end', id: 't1' },
+      finish,
+    ]);
+    const added = events.filter(e => e.event === 'response.output_item.added' && e.data.item.type === 'reasoning').map(e => e.data.item.id);
+    const done = events.filter(e => e.event === 'response.output_item.done' && e.data.item.type === 'reasoning').map(e => e.data.item.id);
+    expect(added).toHaveLength(2);
+    expect(new Set(added).size).toBe(2);
+    expect(done).toEqual(added);
+    const completed = events.find(e => e.event === 'response.completed')!.data.response;
+    const texts = completed.output.filter((o: { type: string }) => o.type === 'reasoning').map((o: { summary: Array<{ text: string }> }) => o.summary[0]?.text);
+    expect(texts).toEqual(['first', 'second']);
+  });
+
+  it('closes a reasoning block left open at stream end', async () => {
+    const events = await run([
+      { type: 'reasoning-start', id: 'r1' },
+      { type: 'reasoning-delta', id: 'r1', text: 'dangling' },
+      finish,
+    ]);
+    const names = events.map(e => e.event);
+    expect(names).toContain('response.reasoning_summary_text.done');
+    expect(names).toContain('response.reasoning_summary_part.done');
+    expect(events.some(e => e.event === 'response.output_item.done' && e.data.item.type === 'reasoning')).toBe(true);
+  });
+});

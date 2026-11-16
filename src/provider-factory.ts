@@ -1221,6 +1221,34 @@ function isClaudeReasoningModel(modelId: string): boolean {
   return major > 4 || (major === 4 && minor >= 6);
 }
 
+/** Provider kinds that talk to Anthropic's own API (directly or via Vertex), where
+ *  `thinking.display` is a documented field. Third-party Anthropic-compatible
+ *  gateways are excluded: whether they accept the field is unverified. */
+const FIRST_PARTY_ANTHROPIC_KINDS = new Set(['anthropic', 'claude-code', 'vertex-anthropic']);
+
+/**
+ * Claude Opus 4.7+ (and Opus 5.5) default `thinking.display` to "omitted", so the
+ * Codex app shows a silent "thinking" for minutes. Ask for summarized thinking on
+ * first-party Claude routes; display changes visibility only, not billing (#93).
+ */
+export function withAnthropicThinkingDisplay(
+  providerOptions: Record<string, Record<string, unknown>> | undefined,
+  route: { npm?: string; providerId?: string; upstreamModelId?: string; modelId: string },
+): Record<string, Record<string, unknown>> | undefined {
+  const kind = providerKind(route.providerId?.trim().toLowerCase() ?? '');
+  const firstParty = FIRST_PARTY_ANTHROPIC_KINDS.has(kind) || route.npm === VERTEX_ANTHROPIC_NPM;
+  const sep = route.modelId.lastIndexOf('__');
+  const model = route.upstreamModelId ?? (sep >= 0 ? route.modelId.slice(sep + 2) : route.modelId);
+  if (!firstParty || !isClaudeReasoningModel(model)) return providerOptions;
+  const anthropic = providerOptions?.anthropic ?? {};
+  const thinking = (anthropic.thinking as Record<string, unknown> | undefined) ?? {};
+  if (thinking.type !== undefined && thinking.type !== 'adaptive') return providerOptions;
+  return {
+    ...(providerOptions ?? {}),
+    anthropic: { ...anthropic, thinking: { ...thinking, type: 'adaptive', display: 'summarized' } },
+  };
+}
+
 function stripGeminiRoutePrefix(modelId: string): string {
   const trimmed = modelId.toLowerCase().trim();
   const sep = trimmed.indexOf('__');

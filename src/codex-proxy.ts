@@ -13,7 +13,7 @@ import {
   parseCodexAppModelSlug,
   codexAppModelSlug,
 } from './codex/app-profile.js';
-import { createLanguageModel, maxToolsForNpm, type VertexProviderConfig } from './provider-factory.js';
+import { createLanguageModel, maxToolsForNpm, withAnthropicThinkingDisplay, type VertexProviderConfig } from './provider-factory.js';
 import { applyClaudeCodeOAuthIdentity } from './oauth/claude-code-identity.js';
 import {
   translateResponsesRequest,
@@ -922,6 +922,7 @@ export async function startCodexProxy(
               ...(requestHeaders ? { requestHeaders } : {}),
             },
           ), route));
+          params = { ...params, providerOptions: withAnthropicThinkingDisplay(params.providerOptions as Record<string, Record<string, unknown>> | undefined, route) as typeof params.providerOptions };
           if (route.contextWindow && route.contextWindow > 0) {
             const before = params.messages.length;
             const estimatedChars = estimateCodexRequestChars(params);
@@ -1624,6 +1625,7 @@ export async function startCodexProxy(
                 ...(requestHeaders ? { requestHeaders } : {}),
               },
             ), route));
+            params = { ...params, providerOptions: withAnthropicThinkingDisplay(params.providerOptions as Record<string, Record<string, unknown>> | undefined, route) as typeof params.providerOptions };
             if (route.contextWindow && route.contextWindow > 0) {
               const before = params.messages.length;
               const estimatedChars = estimateCodexRequestChars(params);
