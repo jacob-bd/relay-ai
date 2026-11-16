@@ -1,3 +1,4 @@
+import { parseContextOverflow } from './codex-context-budget.js';
 import { streamActivity } from './stream-activity.js';
 // OpenAI Responses API (/v1/responses) ↔ Vercel AI SDK. One turn per request; Codex owns the tool loop.
 import { isProviderKind } from './registry/provider-kind.js';
@@ -948,6 +949,8 @@ export interface ResponsesStreamSummary {
   errorMessage?: string;
   /** Upstream HTTP status from that error part, when the SDK error carries one. */
   errorStatus?: number;
+  /** Set when the error was a provider "prompt too long" refusal (#95). */
+  contextOverflow?: { actualTokens?: number; maxTokens?: number };
   finishReason?: string;
   incompleteReason?: 'max_output_tokens' | 'content_filter';
   /** Provider usage from the finish part, when the provider reported one. */
@@ -1301,6 +1304,7 @@ export async function writeResponsesStream(
 
       case 'error': {
         const msg = formatUpstreamError(part.error);
+        const overflow = parseContextOverflow(msg);
         const is429 = msg.includes('429') ||
           (part.error && typeof part.error === 'object' &&
             ((part.error as { statusCode?: number }).statusCode === 429 ||
@@ -1315,6 +1319,7 @@ export async function writeResponsesStream(
           loopDetected,
           errorMessage: msg,
           errorStatus: (part.error as { statusCode?: number } | undefined)?.statusCode,
+          ...(overflow ? { contextOverflow: overflow } : {}),
         });
         emit('response.failed', {
           type: 'response.failed',
@@ -1325,7 +1330,7 @@ export async function writeResponsesStream(
             created_at: createdAt,
             status: 'failed',
             output: [],
-            error: { message: msg, type: is429 ? 'rate_limit_error' : 'api_error', ...(is429 ? { code: '429' } : {}) },
+            error: overflowError(msg) ?? { message: msg, type: is429 ? 'rate_limit_error' : 'api_error', ...(is429 ? { code: '429' } : {}) },
           },
         });
         return;
@@ -1810,8 +1815,15 @@ export function responsesErrorBody(
     created_at: Math.floor(Date.now() / 1000),
     status: 'failed',
     output: [],
-    error: { message, type: statusCode === 429 ? 'rate_limit_error' : 'api_error', code: String(statusCode) },
+    error: overflowError(message) ?? { message, type: statusCode === 429 ? 'rate_limit_error' : 'api_error', code: String(statusCode) },
   };
+}
+
+/** Codex treats `context_length_exceeded` as non-retryable; a bare api_error made it retry 5x (#95). */
+export function overflowError(message: string): { message: string; type: string; code: string } | undefined {
+  return parseContextOverflow(message)
+    ? { message, type: 'invalid_request_error', code: 'context_length_exceeded' }
+    : undefined;
 }
 
 export function writeResponsesErrorStream(modelId: string, message: string, write: WriteFn, statusCode = 401): void {

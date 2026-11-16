@@ -1427,3 +1427,34 @@ describe('live reasoning summaries (#93)', () => {
     expect(events.some(e => e.event === 'response.output_item.done' && e.data.item.type === 'reasoning')).toBe(true);
   });
 });
+
+describe('context overflow error code (#95)', () => {
+  async function failWith(error: unknown) {
+    const { writeResponsesStream } = await import('../src/codex-responses-adapter.js');
+    const chunks: string[] = [];
+    let summary: { contextOverflow?: { actualTokens?: number } } | undefined;
+    async function* stream() { yield { type: 'error', error }; }
+    await writeResponsesStream(stream() as never, 'm', c => chunks.push(c), s => { summary = s as never; });
+    const failed = parseSseEvents(chunks.join('')).find(e => e.event === 'response.failed')!.data.response.error;
+    return { failed, summary };
+  }
+
+  it('maps prompt-too-long stream errors to context_length_exceeded', async () => {
+    const { failed, summary } = await failWith(Object.assign(new Error('prompt is too long: 1207698 tokens > 1000000 maximum'), { statusCode: 400 }));
+    expect(failed).toEqual(expect.objectContaining({ type: 'invalid_request_error', code: 'context_length_exceeded' }));
+    expect(summary?.contextOverflow?.actualTokens).toBe(1207698);
+  });
+
+  it('keeps ordinary 400s as api_error without a code', async () => {
+    const { failed, summary } = await failWith(Object.assign(new Error('bad tool schema'), { statusCode: 400 }));
+    expect(failed.type).toBe('api_error');
+    expect(failed.code).toBeUndefined();
+    expect(summary?.contextOverflow).toBeUndefined();
+  });
+
+  it('responsesErrorBody maps overflow for thrown errors', () => {
+    const body = responsesErrorBody('m', 'prompt is too long: 5 tokens > 4 maximum', 400);
+    expect(body.error).toEqual(expect.objectContaining({ type: 'invalid_request_error', code: 'context_length_exceeded' }));
+    expect(responsesErrorBody('m', 'nope', 400).error).toEqual(expect.objectContaining({ code: '400' }));
+  });
+});

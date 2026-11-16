@@ -22,6 +22,7 @@ import {
   generateResponsesResponse,
   writeResponsesErrorStream,
   formatRelayUsage,
+  overflowError,
   appendCompactionInstruction,
   streamCompactionResponse,
   generateCompactionResponse,
@@ -1025,7 +1026,7 @@ export async function startCodexProxy(
               });
               if (debug) log(`sdk error: ${route.modelId}: ${msg}`);
               sendJson(res, status, {
-                error: {
+                error: overflowError(msg) ?? {
                   message: msg,
                   type: status === 429 ? 'rate_limit_error' : 'api_error',
                   code: String(status),
