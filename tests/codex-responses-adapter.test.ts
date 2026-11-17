@@ -625,6 +625,35 @@ describe('tool output images', () => {
     expect(JSON.stringify(imageMessage)).toContain('data:image/png;base64,AAAA');
   });
 
+  it('moves images out of a custom tool result into a follow-up user message', () => {
+    const params = translateResponsesRequest({
+      model: 'm',
+      input: [
+        { type: 'custom_tool_call', call_id: 'call_1', name: 'exec', input: '{}' },
+        {
+          type: 'custom_tool_call_output',
+          call_id: 'call_1',
+          output: [
+            { type: 'input_text', text: 'Script completed' },
+            { type: 'input_image', image_url: 'data:image/png;base64,AAAA' },
+          ],
+        },
+      ],
+      tools: [{ type: 'custom', name: 'exec', description: 'run a command' }],
+    } as never, '@ai-sdk/openai-compatible');
+
+    const toolMessage = params.messages.find(m => m.role === 'tool');
+    const toolText = JSON.stringify(toolMessage);
+    expect(toolText).toContain('Script completed');
+    expect(toolText).not.toContain('base64,AAAA');
+
+    const imageMessage = params.messages.find(
+      m => m.role === 'user' && Array.isArray(m.content)
+        && m.content.some(p => (p as { type?: string }).type === 'image'),
+    );
+    expect(JSON.stringify(imageMessage)).toContain('data:image/png;base64,AAAA');
+  });
+
   it('leaves tool outputs without images unchanged', () => {
     const params = translateResponsesRequest({
       model: 'm',

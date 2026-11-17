@@ -374,6 +374,34 @@ function splitToolOutputImages(output: unknown): { content: string; images: stri
   };
 }
 
+/** Push a tool result, re-attaching inline images as a follow-up user message. */
+function pushToolResult(
+  messages: ModelMessage[],
+  rawId: string,
+  toolName: string,
+  output: unknown,
+): void {
+  const { content, images } = splitToolOutputImages(output);
+  messages.push({
+    role: 'tool',
+    content: [{
+      type: 'tool-result',
+      toolCallId: rawId,
+      toolName,
+      output: { type: 'text', value: content },
+    }],
+  } as ModelMessage);
+  if (images.length > 0) {
+    messages.push({
+      role: 'user',
+      content: [
+        { type: 'text', text: `Image${images.length > 1 ? 's' : ''} returned by ${toolName} (${rawId}):` },
+        ...images.map(image => ({ type: 'image' as const, image })),
+      ],
+    } as ModelMessage);
+  }
+}
+
 function extractDeveloperAndInstructions(
   items: ResponsesInputItem[],
   instructions?: string,
@@ -530,25 +558,7 @@ export function translateResponsesInput(
     } else if (item.type === 'function_call_output') {
       const { rawId } = splitToolUseId(item.call_id!);
       const toolName = toolNames.get(rawId) ?? 'unknown';
-      const { content, images } = splitToolOutputImages(item.output);
-      messages.push({
-        role: 'tool',
-        content: [{
-          type: 'tool-result',
-          toolCallId: rawId,
-          toolName,
-          output: { type: 'text', value: content },
-        }],
-      } as ModelMessage);
-      if (images.length > 0) {
-        messages.push({
-          role: 'user',
-          content: [
-            { type: 'text', text: `Image${images.length > 1 ? 's' : ''} returned by ${toolName} (${rawId}):` },
-            ...images.map(image => ({ type: 'image' as const, image })),
-          ],
-        } as ModelMessage);
-      }
+      pushToolResult(messages, rawId, toolName, item.output);
     } else if (item.type === 'tool_search_call') {
       const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
       const parts: Record<string, unknown>[] = [];
@@ -598,15 +608,7 @@ export function translateResponsesInput(
       messages.push({ role: 'assistant', content: parts } as ModelMessage);
     } else if (item.type === 'custom_tool_call_output') {
       const { rawId } = splitToolUseId(item.call_id);
-      messages.push({
-        role: 'tool',
-        content: [{
-          type: 'tool-result',
-          toolCallId: rawId,
-          toolName: toolNames.get(rawId) ?? 'unknown',
-          output: { type: 'text', value: serializeToolResultContent(item.output) },
-        }],
-      } as ModelMessage);
+      pushToolResult(messages, rawId, toolNames.get(rawId) ?? 'unknown', item.output);
     } else if (item.type === 'agent_message') {
       const text = messageText(item.content);
       if (text.trim()) {
