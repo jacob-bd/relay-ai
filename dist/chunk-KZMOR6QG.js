@@ -16,12 +16,12 @@ import {
   recordPoolActivity,
   resolveLocalProviderApiKey,
   retryPoolFailure
-} from "./chunk-KFN6FIVD.js";
+} from "./chunk-NNBNEZTN.js";
 import {
   copilotPlanTier,
   filterCachedCopilotModels,
   stripGoogleModelPrefix
-} from "./chunk-SPGBIVJG.js";
+} from "./chunk-7CNEKV2S.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
@@ -58,11 +58,11 @@ import {
   sseChunk,
   streamActivity,
   thinkingProviderOptions
-} from "./chunk-EQV5336U.js";
+} from "./chunk-U43VLYAA.js";
 import {
   isProviderKind,
   resolveProviderOAuthProviderData
-} from "./chunk-JHMI5LJT.js";
+} from "./chunk-MKTUDFQH.js";
 
 // src/core/pool-model.ts
 import { randomUUID as randomUUID2 } from "crypto";
@@ -507,6 +507,27 @@ function splitToolOutputImages(output) {
     images
   };
 }
+function pushToolResult(messages, rawId, toolName, output) {
+  const { content, images } = splitToolOutputImages(output);
+  messages.push({
+    role: "tool",
+    content: [{
+      type: "tool-result",
+      toolCallId: rawId,
+      toolName,
+      output: { type: "text", value: content }
+    }]
+  });
+  if (images.length > 0) {
+    messages.push({
+      role: "user",
+      content: [
+        { type: "text", text: `Image${images.length > 1 ? "s" : ""} returned by ${toolName} (${rawId}):` },
+        ...images.map((image) => ({ type: "image", image }))
+      ]
+    });
+  }
+}
 function extractDeveloperAndInstructions(items2, instructions) {
   const developerParts = [];
   const remaining = [];
@@ -639,25 +660,7 @@ ${content}` }] });
     } else if (item.type === "function_call_output") {
       const { rawId } = splitToolUseId(item.call_id);
       const toolName = toolNames.get(rawId) ?? "unknown";
-      const { content, images } = splitToolOutputImages(item.output);
-      messages.push({
-        role: "tool",
-        content: [{
-          type: "tool-result",
-          toolCallId: rawId,
-          toolName,
-          output: { type: "text", value: content }
-        }]
-      });
-      if (images.length > 0) {
-        messages.push({
-          role: "user",
-          content: [
-            { type: "text", text: `Image${images.length > 1 ? "s" : ""} returned by ${toolName} (${rawId}):` },
-            ...images.map((image) => ({ type: "image", image }))
-          ]
-        });
-      }
+      pushToolResult(messages, rawId, toolName, item.output);
     } else if (item.type === "tool_search_call") {
       const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
       const parts = [];
@@ -707,15 +710,7 @@ ${content}` }] });
       messages.push({ role: "assistant", content: parts });
     } else if (item.type === "custom_tool_call_output") {
       const { rawId } = splitToolUseId(item.call_id);
-      messages.push({
-        role: "tool",
-        content: [{
-          type: "tool-result",
-          toolCallId: rawId,
-          toolName: toolNames.get(rawId) ?? "unknown",
-          output: { type: "text", value: serializeToolResultContent(item.output) }
-        }]
-      });
+      pushToolResult(messages, rawId, toolNames.get(rawId) ?? "unknown", item.output);
     } else if (item.type === "agent_message") {
       const text = messageText(item.content);
       if (text.trim()) {
@@ -3039,7 +3034,7 @@ function wrapPoolError(error) {
 }
 var sessions = new PoolSessionRoutes();
 async function memberModel(routeId, context) {
-  const { createRelayModel } = await import("./model-KYMGG2FF.js");
+  const { createRelayModel } = await import("./model-452XAJQV.js");
   return createRelayModel(routeId, {
     sessionId: context.sessionId,
     ...context.options?.onDebug ? { onDebug: context.options.onDebug } : {},
@@ -3410,4 +3405,4 @@ export {
   parseRelayRouteId,
   loadCoreRegistry
 };
-//# sourceMappingURL=chunk-7PT2Z5MH.js.map
+//# sourceMappingURL=chunk-KZMOR6QG.js.map

@@ -1,6 +1,6 @@
 {
   "name": "@jacobbd/relay-ai",
-  "version": "0.22.7",
+  "version": "0.22.8",
   "publishConfig": {
     "access": "public"
   },

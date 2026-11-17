@@ -3,7 +3,7 @@ import {
   extractApiKey,
   readBody,
   sendJson
-} from "./chunk-AH35F5EN.js";
+} from "./chunk-6GX43QUP.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -14,7 +14,7 @@ import {
   filterModelsByAvailability,
   refreshProviderModels,
   validateClinePassApiKey
-} from "./chunk-PGZRXJWQ.js";
+} from "./chunk-6IPNPR46.js";
 import {
   MAX_POOL_ATTEMPTS,
   POOL_MAX_TOOLS,
@@ -30,7 +30,7 @@ import {
   requestFingerprint,
   sdkPoolRoute,
   translatedEffortClaim
-} from "./chunk-7PT2Z5MH.js";
+} from "./chunk-KZMOR6QG.js";
 import {
   PoolHealthStore,
   describePoolFailure,
@@ -51,7 +51,7 @@ import {
   resolveLocalProviderApiKey,
   retryPoolFailure,
   toOAuthRegistryId
-} from "./chunk-KFN6FIVD.js";
+} from "./chunk-NNBNEZTN.js";
 import {
   SubagentRouteRegistry,
   anthropicEffortFromRequest,
@@ -61,7 +61,7 @@ import {
   streamAnthropicResponse,
   translateRequest,
   writeAnthropicStream
-} from "./chunk-M5YJ5QYR.js";
+} from "./chunk-6GD6PMDB.js";
 import {
   anthropicErrorType,
   formatUpstreamError,
@@ -124,7 +124,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-EQV5336U.js";
+} from "./chunk-U43VLYAA.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -167,7 +167,7 @@ import {
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth,
   tokensToStoredCredential
-} from "./chunk-JHMI5LJT.js";
+} from "./chunk-MKTUDFQH.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -185,32 +185,41 @@ import {
 } from "./chunk-XEH2JMTL.js";
 
 // src/oauth/risk-notice.ts
+var SUBSCRIPTION_OAUTH_ACKNOWLEDGEMENT = "agree";
+function isSubscriptionOAuthAcknowledgement(value) {
+  return typeof value === "string" && value.trim().toLowerCase() === SUBSCRIPTION_OAUTH_ACKNOWLEDGEMENT;
+}
 function subscriptionOAuthRisk(providerId) {
   const isGoogle = providerId === "antigravity";
+  const provider = isGoogle ? "Google" : "Anthropic";
+  const acknowledgement = SUBSCRIPTION_OAUTH_ACKNOWLEDGEMENT;
   return {
     providerLabel: isGoogle ? "Antigravity / Google" : "Claude Code",
     isGoogle,
-    service: isGoogle ? "Google account (Gmail, Drive, YouTube, Workspace, and all tied services)" : "Anthropic account (Claude Pro / Max subscription)",
-    enforcementNote: isGoogle ? "Community reports: Google has issued account bans for this usage." : "Anthropic actively enforces this \u2014 validating request shape and has taken legal action against other projects.",
-    compatibilityNote: isGoogle ? void 0 : "For compatibility, relay-ai may reproduce Claude Code-style request metadata and attribution so Anthropic classifies traffic as Claude Code.",
-    consequences: ["Token revocation", "Account suspension or permanent ban"],
-    lossNote: isGoogle ? "Loss of ALL services tied to this Google account" : void 0,
-    advice: isGoogle ? "Do not use your primary Google account. Use a throwaway account." : void 0,
-    disclaimer: `relay-ai is not affiliated with ${isGoogle ? "Google" : "Anthropic"} and cannot protect you.`
+    service: isGoogle ? "Google account (Gmail, Drive, YouTube, Workspace, and every service tied to it)" : "Anthropic account (Claude Pro / Max subscription)",
+    enforcementNote: isGoogle ? "Google's Antigravity Terms of Service prohibit accessing the service with third-party software or automated tools. Google has blocked accounts for using Antigravity OAuth outside the official app." : "Anthropic's Terms of Service prohibit routing subscription credentials through third-party software. Anthropic actively enforces this, validates request shape, and has taken legal action against other projects.",
+    compatibilityNote: isGoogle ? void 0 : "For compatibility, relay-ai may reproduce Claude Code request metadata and attribution so Anthropic classifies traffic as Claude Code.",
+    consequences: isGoogle ? ["OAuth tokens revoked", "Antigravity access suspended", "Google account suspended or permanently banned"] : ["OAuth tokens revoked", "Claude subscription suspended or permanently banned", "Loss of paid access and any data tied to the account"],
+    lossNote: isGoogle ? "Loss of Gmail, Drive, YouTube, Workspace, and every other Google service on this account" : void 0,
+    advice: isGoogle ? "Do not use your primary Google account. Use a throwaway account you can afford to lose." : "Do not use an account you cannot afford to lose.",
+    disclaimer: `relay-ai is not affiliated with ${provider} and cannot appeal, restore, or protect your account. By typing "${acknowledgement}" you accept full responsibility for any action ${provider} takes.`,
+    acknowledgement
   };
 }
 function subscriptionOAuthRiskLines(providerId) {
   const risk = subscriptionOAuthRisk(providerId);
   return {
     title: `Account risk \u2014 ${risk.providerLabel} OAuth`,
+    acknowledgement: risk.acknowledgement,
     lines: [
-      `This extracts OAuth tokens from your ${risk.service}.`,
-      "Routing subscription tokens through relay-ai to power other tools may violate the provider's Terms of Service.",
+      `This connects relay-ai to your ${risk.service} using OAuth.`,
+      "Using subscription credentials through third-party software may violate the provider's Terms of Service.",
       risk.enforcementNote,
       ...risk.compatibilityNote ? [risk.compatibilityNote] : [],
       `Possible consequences: ${[...risk.consequences, ...risk.lossNote ? [risk.lossNote] : []].join("; ")}.`,
-      ...risk.advice ? [risk.advice] : [],
-      risk.disclaimer
+      risk.advice,
+      risk.disclaimer,
+      `Type "${risk.acknowledgement}" to confirm you understand and accept these risks.`
     ]
   };
 }
@@ -420,9 +429,9 @@ function printOAuthStepsPanel(title, providerLabel) {
 async function confirmSubscriptionOAuthRisk(providerId) {
   const risk = subscriptionOAuthRisk(providerId);
   printPanel(pc.red(`\u26A0  Account Risk \u2014 ${risk.providerLabel} OAuth`), [
-    `${pc.white("This extracts OAuth tokens from your")} ${pc.bold(risk.service)}.`,
+    `${pc.white("This connects relay-ai to your")} ${pc.bold(risk.service)} ${pc.white("using OAuth.")}`,
     "",
-    `${pc.white("Routing subscription tokens through relay-ai to power other tools")}`,
+    `${pc.white("Using subscription credentials through third-party software")}`,
     `${pc.white("may violate the provider's Terms of Service.")}`,
     "",
     `${pc.yellow(risk.enforcementNote)}`,
@@ -432,14 +441,14 @@ async function confirmSubscriptionOAuthRisk(providerId) {
     ...risk.consequences.map((item) => `  ${pc.dim("\u2022")} ${pc.white(item)}`),
     ...risk.lossNote ? [`  ${pc.dim("\u2022")} ${pc.red(pc.bold(risk.lossNote))}`] : [],
     "",
-    ...risk.advice ? [`${pc.red(pc.bold("Do not use your primary Google account."))} ${pc.white("Use a throwaway account.")}`] : [],
+    `${pc.red(pc.bold(risk.advice))}`,
     `${pc.dim(risk.disclaimer)}`
   ]);
   const answer = await p.text({
-    message: 'Type "yes" to accept the risk and proceed, or Ctrl+C to cancel:',
-    validate: (v) => v === "yes" ? void 0 : 'Type exactly "yes" to confirm'
+    message: `Type "${risk.acknowledgement}" to confirm you understand and accept these risks, or Ctrl+C to cancel:`,
+    validate: (v) => isSubscriptionOAuthAcknowledgement(v) ? void 0 : `Type exactly "${risk.acknowledgement}" to confirm`
   });
-  return !p.isCancel(answer) && answer === "yes";
+  return !p.isCancel(answer) && isSubscriptionOAuthAcknowledgement(answer);
 }
 function printNetworkWarningPanel() {
   printPanel(pc.yellow("Network mode"), [
@@ -4392,8 +4401,8 @@ async function serveOpenAiPool(req, res, options, body, plog) {
   plog(() => `openai-chat-completions pool stream=${body.stream === true}`);
   try {
     const [{ createRelayModel }, { RELAY_POOL_ROUTE_ID }] = await Promise.all([
-      import("./model-KYMGG2FF.js"),
-      import("./pool-model-24QQX5FZ.js")
+      import("./model-452XAJQV.js"),
+      import("./pool-model-LIOT2DRG.js")
     ]);
     const languageModel = await createRelayModel(RELAY_POOL_ROUTE_ID, { sessionId, onDebug: plog });
     const params = translateOpenAiRequest(body);
@@ -7399,6 +7408,7 @@ async function launchOrRestartClaudeApp(prompt = "Restart Claude Desktop to appl
 }
 
 export {
+  isSubscriptionOAuthAcknowledgement,
   subscriptionOAuthRiskLines,
   printPanel,
   relayIntro,
@@ -7495,4 +7505,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-ZUVSL6UO.js.map
+//# sourceMappingURL=chunk-EBJDS75C.js.map
