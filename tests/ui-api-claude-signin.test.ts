@@ -29,7 +29,7 @@ async function call(method: string, url: string, body?: unknown, opts?: { uiMode
   return { code: response.result.code, body: JSON.parse(response.result.data) };
 }
 const start = (extra: Record<string, unknown> = {}) =>
-  call('POST', '/api/providers/oauth/start', { providerId: 'claude-code', acceptRisk: true, ...extra });
+  call('POST', '/api/providers/oauth/start', { providerId: 'claude-code', riskAcknowledgement: 'agree', ...extra });
 const finished = async (sessionId: string) => {
   let last: any;
   await vi.waitFor(async () => {
@@ -119,7 +119,7 @@ describe('UI sign-in for Claude Code (paste the code Anthropic shows)', () => {
   });
 
   it('is not available in the server admin UI', async () => {
-    const result = await call('POST', '/api/providers/oauth/start', { providerId: 'claude-code', acceptRisk: true }, { uiMode: 'server' });
+    const result = await call('POST', '/api/providers/oauth/start', { providerId: 'claude-code', riskAcknowledgement: 'agree' }, { uiMode: 'server' });
     expect(result.code).toBe(400);
     expect(claude.build).not.toHaveBeenCalled();
   });

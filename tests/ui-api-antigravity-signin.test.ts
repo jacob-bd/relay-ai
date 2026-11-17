@@ -52,20 +52,31 @@ describe('UI sign-in for Antigravity', () => {
     expect(result.code).toBe(200);
     expect(result.body.needsConfirmation).toBe(true);
     expect(result.body.risk.title).toMatch(/Antigravity/);
+    expect(result.body.risk.acknowledgement).toBe('agree');
     expect(result.body.risk.lines.join(' ')).toMatch(/ban/i);
+    expect(result.body.risk.lines.join(' ')).toMatch(/Gmail/);
+    expect(result.body.risk.lines.join(' ')).toMatch(/Type "agree"/);
     expect(oauth.build).not.toHaveBeenCalled();
   });
 
-  it('only a literal acceptRisk: true counts as confirmation', async () => {
-    for (const acceptRisk of ['true', 1, 'yes']) {
-      const result = await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', acceptRisk });
+  it('requires the typed agree acknowledgement, not a boolean or yes', async () => {
+    for (const riskAcknowledgement of [true, 'true', 1, 'yes', 'agree now', '']) {
+      const result = await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', riskAcknowledgement });
       expect(result.body.needsConfirmation).toBe(true);
     }
+    const legacy = await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', acceptRisk: true });
+    expect(legacy.body.needsConfirmation).toBe(true);
     expect(oauth.build).not.toHaveBeenCalled();
+  });
+
+  it('accepts the acknowledgement with surrounding whitespace and case', async () => {
+    const result = await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', riskAcknowledgement: ' AGREE ' });
+    expect(result.code).toBe(200);
+    expect(result.body.pkce).toBe(true);
   });
 
   it('starts the browser sign-in once the risk is accepted', async () => {
-    const result = await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', acceptRisk: true });
+    const result = await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', riskAcknowledgement: 'agree' });
 
     expect(result.code).toBe(200);
     expect(result.body).toMatchObject({ pkce: true, authUrl: expect.stringContaining('accounts.google.com') });
@@ -79,7 +90,7 @@ describe('UI sign-in for Antigravity', () => {
     expect(oauth.build).not.toHaveBeenCalled();
 
     oauth.build.mockResolvedValueOnce({ authUrl: 'https://accounts.google.com/auth?state=S-add', codeVerifier: 'v', oauthState: 'S-add', redirectUri: 'r' });
-    const start = await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', addAccount: true, acceptRisk: true });
+    const start = await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', addAccount: true, riskAcknowledgement: 'agree' });
     expect(start.body.pkce).toBe(true);
     await call('GET', '/oauth/callback?code=good&state=S-add');
     await vi.waitFor(async () => {
@@ -89,7 +100,7 @@ describe('UI sign-in for Antigravity', () => {
   });
 
   it('is not available in the server admin UI (device code only)', async () => {
-    const result = await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', acceptRisk: true }, { uiMode: 'server' });
+    const result = await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', riskAcknowledgement: 'agree' }, { uiMode: 'server' });
 
     expect(result.code).toBe(400);
     expect(oauth.build).not.toHaveBeenCalled();
@@ -102,7 +113,7 @@ describe('UI sign-in for Antigravity', () => {
   });
 
   it('rejects a callback with an unknown state', async () => {
-    await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', acceptRisk: true });
+    await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', riskAcknowledgement: 'agree' });
     const result = await call('GET', '/oauth/callback?code=c&state=WRONG');
 
     expect(result.code).toBe(400);
@@ -112,7 +123,7 @@ describe('UI sign-in for Antigravity', () => {
   it('completes the sign-in on a matching callback and saves the account', async () => {
     // A state of its own: sessions from earlier tests live on in the module.
     oauth.build.mockResolvedValueOnce({ authUrl: 'https://accounts.google.com/auth?state=S-final', codeVerifier: 'v', oauthState: 'S-final', redirectUri: 'r' });
-    const start = await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', acceptRisk: true });
+    const start = await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', riskAcknowledgement: 'agree' });
     const callback = await call('GET', '/oauth/callback?code=good&state=S-final');
     expect(callback.code).toBe(200);
 

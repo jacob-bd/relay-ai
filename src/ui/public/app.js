@@ -1955,16 +1955,17 @@ async function beginDeviceOAuthFlow({ providerId, addAccount = false, signInButt
   let startResult;
   try {
     startResult = await api('POST', '/api/providers/oauth/start', { providerId, ...(addAccount ? { addAccount: true } : {}) });
-    // Subscription sign-ins (Antigravity) need an explicit risk acknowledgement, as in the terminal.
+    // Subscription sign-ins (Antigravity, Claude Code) need the typed risk acknowledgement.
     if (startResult.needsConfirmation) {
-      const { title, lines } = startResult.risk;
-      if (!window.confirm(`${title}\n\n${lines.join('\n\n')}\n\nAccept the risk and continue?`)) {
-        feedback.textContent = '';
-        feedback.className = 'key-feedback';
+      const { title, lines, acknowledgement } = startResult.risk;
+      const phrase = acknowledgement || 'agree';
+      const answer = window.prompt(`${title}\n\n${lines.join('\n\n')}\n\nType "${phrase}" to continue, or Cancel to stop.`);
+      if (answer === null || answer.trim().toLowerCase() !== phrase.toLowerCase()) {
+        setOAuthFeedback(feedback, `Sign-in cancelled. You must type "${phrase}" to continue.`, 'muted');
         reenable();
         return;
       }
-      startResult = await api('POST', '/api/providers/oauth/start', { providerId, acceptRisk: true, ...(addAccount ? { addAccount: true } : {}) });
+      startResult = await api('POST', '/api/providers/oauth/start', { providerId, riskAcknowledgement: answer.trim(), ...(addAccount ? { addAccount: true } : {}) });
     }
   } catch {
     setOAuthFeedback(feedback, 'Could not start sign-in. Check the connection and try again.', 'error');
@@ -2007,7 +2008,7 @@ function buildOAuthTemplateBodyContent(template) {
   const note = document.createElement('div');
   note.className = 'oauth-device-note';
   note.textContent = template.subscriptionRisk
-    ? 'Sign in with your subscription account — no API key required. This uses a paid subscription outside its official app, which may put that account at risk. You will be asked to confirm before sign-in starts.'
+    ? 'Sign in with your subscription account — no API key required. This uses a paid subscription outside its official app and can get the account suspended or permanently banned. You must type "agree" to the account-risk disclaimer before sign-in starts.'
     : 'Sign in with a one-time device code — no API key required.';
 
   const actionRow = document.createElement('div');

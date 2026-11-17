@@ -6,6 +6,10 @@
 
 - **Screenshots returned by Codex custom tools no longer ship as base64 text.** The Responses adapter moved images out of regular tool results but not `custom_tool_call_output` items, which is how `functions.exec` returns `view_image` output. A 1.2 MB screenshot became roughly 855K text tokens and pushed a 1M-context session over the provider limit; the estimator counted it as one image, so the overflow retry resent the same body. Both tool-output shapes now reattach images as real image parts.
 
+### Changed
+
+- **Antigravity and Claude Code OAuth now require typing `agree` to an account-ban disclaimer.** Both the terminal and web UI spell out token revocation, suspension or permanent ban, and for Antigravity the loss of every Google service tied to the account. Sign-in does not start until the user types the phrase; the old boolean confirmation is rejected server-side.
+
 ## [0.22.7] - 2026-11-16
 
 ### Added

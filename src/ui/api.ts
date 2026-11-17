@@ -3,7 +3,7 @@ import { clearPoolActivity } from '../pool/activity.js';
 import { poolCatalogEntry } from '../pool/catalog.js';
 import { handlePoolApi, verifyUiPoolMember, invalidateUiPoolMember } from './pool-api.js';
 import { supportsAdditionalOAuthAccounts } from '../oauth/types.js';
-import { subscriptionOAuthRiskLines } from '../oauth/risk-notice.js';
+import { isSubscriptionOAuthAcknowledgement, subscriptionOAuthRiskLines } from '../oauth/risk-notice.js';
 import { readOAuthAccountLabel } from '../registry/oauth-account.js';
 import { describeOAuthAccount, formatOAuthAccount } from '../oauth/identity.js';
 import { isProviderKind, providerKind } from '../registry/provider-kind.js';
@@ -1295,7 +1295,7 @@ async function handleOAuthStart(
   opts: { uiMode?: 'full' | 'server' } = {},
 ): Promise<void> {
   try {
-    const body = JSON.parse(await readBody(req)) as { providerId?: string; acceptRisk?: unknown; addAccount?: unknown };
+    const body = JSON.parse(await readBody(req)) as { providerId?: string; riskAcknowledgement?: unknown; addAccount?: unknown };
     const { providerId } = body;
     if (!providerId || !canStartOAuthFromUi(providerId, opts.uiMode)) {
       sendJson(res, 400, { error: 'Unsupported OAuth provider.' }); return;
@@ -1364,9 +1364,9 @@ async function handleOAuthStart(
     }
 
     if (PKCE_PROVIDER_IDS.has(kind)) {
-      // The terminal asks for an explicit "yes" first; the UI must too, and the server
+      // The terminal asks the user to type "agree" first; the UI must too, and the server
       // enforces it so a hand-made request cannot skip the warning.
-      if (body.acceptRisk !== true) {
+      if (!isSubscriptionOAuthAcknowledgement(body.riskAcknowledgement)) {
         sendJson(res, 200, { needsConfirmation: true, risk: subscriptionOAuthRiskLines(kind as 'claude-code' | 'antigravity') });
         return;
       }

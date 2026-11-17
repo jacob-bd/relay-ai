@@ -1,6 +1,6 @@
 // Shared relay-ai CLI styling — @clack/prompts + picocolors.
 // Use printPanel for important callouts (p.note dims all body text).
-import { subscriptionOAuthRisk } from './oauth/risk-notice.js';
+import { isSubscriptionOAuthAcknowledgement, subscriptionOAuthRisk } from './oauth/risk-notice.js';
 import { providerKind } from './registry/provider-kind.js';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
@@ -272,9 +272,9 @@ export async function confirmSubscriptionOAuthRisk(
   const risk = subscriptionOAuthRisk(providerId);
 
   printPanel(pc.red(`⚠  Account Risk — ${risk.providerLabel} OAuth`), [
-    `${pc.white('This extracts OAuth tokens from your')} ${pc.bold(risk.service)}.`,
+    `${pc.white('This connects relay-ai to your')} ${pc.bold(risk.service)} ${pc.white('using OAuth.')}`,
     '',
-    `${pc.white('Routing subscription tokens through relay-ai to power other tools')}`,
+    `${pc.white('Using subscription credentials through third-party software')}`,
     `${pc.white('may violate the provider\'s Terms of Service.')}`,
     '',
     `${pc.yellow(risk.enforcementNote)}`,
@@ -284,16 +284,16 @@ export async function confirmSubscriptionOAuthRisk(
     ...risk.consequences.map(item => `  ${pc.dim('•')} ${pc.white(item)}`),
     ...(risk.lossNote ? [`  ${pc.dim('•')} ${pc.red(pc.bold(risk.lossNote))}`] : []),
     '',
-    ...(risk.advice ? [`${pc.red(pc.bold('Do not use your primary Google account.'))} ${pc.white('Use a throwaway account.')}`] : []),
+    `${pc.red(pc.bold(risk.advice))}`,
     `${pc.dim(risk.disclaimer)}`,
   ]);
 
   const answer = await p.text({
-    message: 'Type "yes" to accept the risk and proceed, or Ctrl+C to cancel:',
-    validate: (v) => v === 'yes' ? undefined : 'Type exactly "yes" to confirm',
+    message: `Type "${risk.acknowledgement}" to confirm you understand and accept these risks, or Ctrl+C to cancel:`,
+    validate: (v) => isSubscriptionOAuthAcknowledgement(v) ? undefined : `Type exactly "${risk.acknowledgement}" to confirm`,
   });
 
-  return !p.isCancel(answer) && answer === 'yes';
+  return !p.isCancel(answer) && isSubscriptionOAuthAcknowledgement(answer);
 }
 
 export function printNetworkWarningPanel(): void {
