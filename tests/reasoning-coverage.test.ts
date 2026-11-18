@@ -21,6 +21,13 @@ const DECLARED_DROPS: Record<string, string[]> = {
   'openai-oauth': ['none'],
 };
 
+const MODEL_DECLARED_DROPS = [
+  // The Mistral SDK accepts only high and none for reasoningEffort.
+  { providerId: 'mistral', modelId: 'mistral-large-latest', levels: ['low', 'medium'] },
+  // Relay's GLM 5.3 profile has no verified wire mapping for disabling effort.
+  { providerId: 'kilo', modelId: 'z-ai/glm-5.3-fast', levels: ['none'] },
+];
+
 interface ProviderExclusion {
   provider: string;
   reason: string;
@@ -110,8 +117,13 @@ function isOffered(levels: string[], value: string): boolean {
   return false;
 }
 
-function expectedLevels(providerId: string, declared: string[]): string[] {
+function expectedLevels(providerId: string, modelId: string, declared: string[]): string[] {
   const drops = new Set(DECLARED_DROPS[providerId] ?? []);
+  for (const entry of MODEL_DECLARED_DROPS) {
+    if (entry.providerId === providerId && entry.modelId === modelId) {
+      for (const level of entry.levels) drops.add(level);
+    }
+  }
   return declared.filter(v => !drops.has(v));
 }
 
@@ -128,7 +140,7 @@ describe('reasoning coverage', () => {
     const failures: string[] = [];
     for (const row of rows) {
       if (isExcluded(row.providerId, row.modelId)) continue;
-      const expected = expectedLevels(row.providerId, row.declared);
+      const expected = expectedLevels(row.providerId, row.modelId, row.declared);
       const missing = expected.filter(level => !isOffered(row.levels, level));
       if (missing.length > 0) {
         failures.push(
@@ -150,7 +162,7 @@ describe('reasoning coverage', () => {
       expect(matching.length, `excluded provider "${exclusion.provider}" matches no declaring model`).toBeGreaterThan(0);
       expect(exclusion.reason.length).toBeGreaterThan(10);
       const wouldFail = matching.some(row => {
-        const expected = expectedLevels(row.providerId, row.declared);
+        const expected = expectedLevels(row.providerId, row.modelId, row.declared);
         return expected.some(level => !row.levels.includes(level));
       });
       expect(wouldFail, `excluded provider "${exclusion.provider}" now passes — drop the exclusion`).toBe(true);
@@ -163,6 +175,13 @@ describe('reasoning coverage', () => {
   });
 
   it('keeps declared-drop entries live', () => {
+    for (const { providerId, modelId, levels } of MODEL_DECLARED_DROPS) {
+      const row = rows.find(r => r.providerId === providerId && r.modelId === modelId);
+      for (const level of levels) {
+        expect(row?.declared, `${providerId}/${modelId} no longer declares ${level}`).toContain(level);
+        expect(isOffered(row!.levels, level), `${providerId}/${modelId} now offers ${level}`).toBe(false);
+      }
+    }
     for (const [providerId, drops] of Object.entries(DECLARED_DROPS)) {
       const providerRows = rows.filter(r => r.providerId === providerId);
       for (const drop of drops) {
