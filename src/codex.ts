@@ -315,6 +315,7 @@ async function runCodexVertexLaunch(
     apiKey: '',
     providerId: 'vertex',
     vertex: vertexConfig,
+    contextWindow: m.contextWindow,
   }));
 
   const startingRoute: CodexRoute = {
@@ -932,6 +933,7 @@ export async function runCodexCommand(
         authType: route.authType,
         oauthAccountId: route.oauthAccountId,
         providerData: route.providerData,
+        contextWindow: route.contextWindow,
         supportedParameters: route.supportedParameters,
         reasoning: route.reasoning,
         interleavedReasoningField: route.interleavedReasoningField,

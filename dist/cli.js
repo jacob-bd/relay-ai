@@ -7400,7 +7400,8 @@ async function runCodexVertexLaunch(passthroughArgs, trace) {
     npm: VERTEX_ANTHROPIC_NPM,
     apiKey: "",
     providerId: "vertex",
-    vertex: vertexConfig
+    vertex: vertexConfig,
+    contextWindow: m.contextWindow
   }));
   const startingRoute = {
     tier: "proxy",
@@ -7989,6 +7990,7 @@ Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
         authType: route.authType,
         oauthAccountId: route.oauthAccountId,
         providerData: route.providerData,
+        contextWindow: route.contextWindow,
         supportedParameters: route.supportedParameters,
         reasoning: route.reasoning,
         interleavedReasoningField: route.interleavedReasoningField,
