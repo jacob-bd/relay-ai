@@ -3,7 +3,7 @@ import {
   extractApiKey,
   readBody,
   sendJson
-} from "./chunk-6GX43QUP.js";
+} from "./chunk-QP6QJTTA.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -14,7 +14,7 @@ import {
   filterModelsByAvailability,
   refreshProviderModels,
   validateClinePassApiKey
-} from "./chunk-6IPNPR46.js";
+} from "./chunk-PHCKBXWY.js";
 import {
   MAX_POOL_ATTEMPTS,
   POOL_MAX_TOOLS,
@@ -30,7 +30,7 @@ import {
   requestFingerprint,
   sdkPoolRoute,
   translatedEffortClaim
-} from "./chunk-KZMOR6QG.js";
+} from "./chunk-KU4ZW3Z5.js";
 import {
   PoolHealthStore,
   describePoolFailure,
@@ -51,7 +51,7 @@ import {
   resolveLocalProviderApiKey,
   retryPoolFailure,
   toOAuthRegistryId
-} from "./chunk-NNBNEZTN.js";
+} from "./chunk-3RVWRSAD.js";
 import {
   SubagentRouteRegistry,
   anthropicEffortFromRequest,
@@ -61,7 +61,7 @@ import {
   streamAnthropicResponse,
   translateRequest,
   writeAnthropicStream
-} from "./chunk-6GD6PMDB.js";
+} from "./chunk-5POQZTUA.js";
 import {
   anthropicErrorType,
   formatUpstreamError,
@@ -124,7 +124,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-U43VLYAA.js";
+} from "./chunk-4MY652T6.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -167,7 +167,7 @@ import {
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth,
   tokensToStoredCredential
-} from "./chunk-MKTUDFQH.js";
+} from "./chunk-3PKE7YOS.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -4401,8 +4401,8 @@ async function serveOpenAiPool(req, res, options, body, plog) {
   plog(() => `openai-chat-completions pool stream=${body.stream === true}`);
   try {
     const [{ createRelayModel }, { RELAY_POOL_ROUTE_ID }] = await Promise.all([
-      import("./model-452XAJQV.js"),
-      import("./pool-model-LIOT2DRG.js")
+      import("./model-QMCWBJET.js"),
+      import("./pool-model-SO6IGA4Z.js")
     ]);
     const languageModel = await createRelayModel(RELAY_POOL_ROUTE_ID, { sessionId, onDebug: plog });
     const params = translateOpenAiRequest(body);
@@ -7505,4 +7505,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-EBJDS75C.js.map
+//# sourceMappingURL=chunk-7IK63RCY.js.map

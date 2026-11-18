@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.22.9] - 2026-11-17
+
+### Fixed
+
+- **Codex CLI Vertex and single-model proxy launches now pass `contextWindow` into the proxy.** Those paths omitted it, so auto-summarize and overflow trim saw `window <= 0` and skipped; oversized chats could hit the provider untrimmed (the App / favorites paths already passed the window).
+
 ## [0.22.8] - 2026-11-17
 
 ### Fixed
