@@ -6,8 +6,9 @@ import {
 } from '../constants.js';
 import { decodeCompactionContent } from '../codex-responses-adapter.js';
 import { stripToolUseIdSuffix } from '../proxy-shared.js';
+import type { NativeCodexImagePath } from './routing.js';
 
-export const NATIVE_CODEX_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses';
+const NATIVE_CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex';
 export const NATIVE_FORWARD_HEADERS = new Set([
   'authorization',
   'chatgpt-account-id',
@@ -22,6 +23,7 @@ export const NATIVE_FORWARD_HEADERS = new Set([
   'user-agent',
   'version',
   'x-client-request-id',
+  'x-codex-image-turn-id',
   'x-codex-turn-metadata',
   'x-codex-turn-state',
   'x-codex-window-id',
@@ -55,7 +57,8 @@ export function allowlistedNativeHeaders(
 export interface NativeHttpForwardOptions {
   body: string | Uint8Array;
   inboundHeaders: IncomingHttpHeaders | Record<string, string | undefined>;
-  nativeUrl?: string;
+  path?: '/v1/responses' | NativeCodexImagePath;
+  nativeBaseUrl?: string;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
 }
@@ -125,10 +128,13 @@ export async function forwardNativeCodexHttp(options: NativeHttpForwardOptions):
   const fetchImpl = options.fetchImpl ?? fetch;
   const headers = allowlistedNativeHeaders(options.inboundHeaders);
   headers['content-type'] = headerValue(options.inboundHeaders, 'content-type') ?? 'application/json';
-  return fetchImpl(options.nativeUrl ?? NATIVE_CODEX_RESPONSES_URL, {
+  const path = options.path ?? '/v1/responses';
+  const baseUrl = (options.nativeBaseUrl ?? NATIVE_CODEX_BASE_URL).replace(/\/$/, '');
+  const body = path === '/v1/responses' ? prepareNativeHttpBody(options.body) : options.body;
+  return fetchImpl(`${baseUrl}${path.slice('/v1'.length)}`, {
     method: 'POST',
     headers,
-    body: prepareNativeHttpBody(options.body) as BodyInit,
+    body: body as BodyInit,
     signal: options.signal,
     redirect: 'manual',
   });

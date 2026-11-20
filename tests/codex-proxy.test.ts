@@ -437,6 +437,63 @@ describe('startCodexProxy', () => {
     expect(response.status).toBe(404);
   });
 
+  it.each([
+    { operation: 'generations', imageInput: {} },
+    { operation: 'edits', imageInput: { images: [{ image_url: 'data:image/png;base64,aW1hZ2U=' }] } },
+  ])('forwards mixed-mode image $operation through native Codex', async ({ operation, imageInput }) => {
+    const imageResponse = { data: [{ b64_json: 'cG5n' }] };
+    const nativeFetch = vi.fn(async (_url: string, _init: RequestInit) => new Response(JSON.stringify(imageResponse), {
+      headers: {
+        'content-type': 'application/json',
+        'x-codex-imagegen-request-id': 'image-request-1',
+      },
+    }));
+    const capability = 'I'.repeat(43);
+    handle = await startCodexProxy([], {
+      requireAuth: false,
+      mixedNative: { nativeModelIds: new Set(['gpt-5.5']), capability, nativeFetchImpl: nativeFetch as typeof fetch },
+    });
+    const localUrl = `http://127.0.0.1:${handle.port}`;
+    const path = `/v1/images/${operation}`;
+    const body = JSON.stringify({ model: 'gpt-image-2', prompt: 'A red fedora', ...imageInput });
+    const request = {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Bearer native',
+        'chatgpt-account-id': 'acct',
+        'x-codex-image-turn-id': 'image-turn-1',
+        'x-provider-key': 'relay-secret',
+        'user-agent': 'codex_cli_rs',
+      },
+      body,
+    };
+
+    const wrongCapability = await fetch(`${localUrl}/_relay-codex/wrong${path}`, request);
+    expect(wrongCapability.status).toBe(404);
+
+    const response = await fetch(`${localUrl}/_relay-codex/${capability}${path}`, request);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-codex-imagegen-request-id')).toBe('image-request-1');
+    expect(await response.json()).toEqual(imageResponse);
+    expect(nativeFetch).toHaveBeenCalledExactlyOnceWith(
+      `https://chatgpt.com/backend-api/codex/images/${operation}`,
+      expect.objectContaining({
+        method: 'POST',
+        body,
+        redirect: 'manual',
+        headers: {
+          authorization: 'Bearer native',
+          'ChatGPT-Account-Id': 'acct',
+          'x-codex-image-turn-id': 'image-turn-1',
+          'content-type': 'application/json',
+          'user-agent': 'codex_cli_rs',
+        },
+      }),
+    );
+  });
+
   it('forwards a mixed native WebSocket response.create frame to the native upstream', async () => {
     const upstream = new WebSocketServer({ port: 0 });
     const upstreamPort = await new Promise<number>(resolve => upstream.on('listening', () => resolve((upstream.address() as { port: number }).port)));

@@ -167,3 +167,19 @@ describe('formatUpstreamError with an errors[] list body', () => {
     expect(formatUpstreamError(err)).toBe('model is not a multimodal model (HTTP 400)');
   });
 });
+
+describe('formatUpstreamError with a Google/Vertex array error body', () => {
+  it('surfaces [{"error": {"message": "..."}}] instead of bare status text', () => {
+    const err = {
+      message: 'Bad Request',
+      statusCode: 400,
+      responseBody: '[{"error":{"code":400,"message":"Request payload size exceeds the limit.","status":"INVALID_ARGUMENT"}}]',
+    };
+    expect(formatUpstreamError(err)).toBe('Request payload size exceeds the limit. (HTTP 400)');
+  });
+
+  it('falls back cleanly when an array error body is empty', () => {
+    expect(formatUpstreamError({ message: 'Bad Request', statusCode: 400, responseBody: '[]' }))
+      .toBe('Bad Request (HTTP 400)');
+  });
+});

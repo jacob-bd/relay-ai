@@ -316,6 +316,8 @@ In the terminal, `relay-ai codex` and `relay-ai codex-app` ask **Which models do
 
 The selected Relay model remains the initial model. Native Codex models, General Favorites, and the configured Codex SubAgents model are entries in the mixed catalog. Codex decides when to launch a sub-agent; every child request marked by Codex is routed to the one configured Relay model regardless of the native model id inherited by the child. Because Codex's orchestration eligibility is tied to catalog metadata, the Codex SubAgents model may also be visible in the normal model picker. Relay starts one local capability-protected proxy for the session. Native HTTP and Responses-Lite WebSocket requests are forwarded to the authenticated Codex backend; Relay routes use the existing SDK translation path.
 
+Built-in image generation and editing use the native ChatGPT sign-in in mixed mode, including when a Relay model handles the conversation. Availability follows the signed-in ChatGPT account.
+
 Relay does not create custom Codex agent definitions. Codex owns agent roles and child settings; Relay owns only the selected provider/model route. Upgrades remove obsolete Relay-managed files named `relay-model-*.toml` while preserving every user-created agent file.
 
 Mixed mode fails closed if the configured Codex SubAgents model cannot be resolved from the current provider catalog or credential store. Relay reports the provider/model entry and does not launch with a partial catalog that would silently fall back to native sub-agents.
@@ -479,7 +481,7 @@ Use `relay-ai codex-app --relay-only` and sign in with any other ChatGPT account
 | Anthropic key rejected on `providers add` | Update relay-ai (Bearer vs `x-api-key` fix) |
 | Model says relay-ai forced sandbox | Wrong — check Codex sandbox flags, not `RELAY_AI_CODEX_KEY` |
 | MCP tools (Context7, chrome-devtools, the built-in browser) fail with `unsupported call: ...` | Update relay-ai — fixed by translating Codex's proprietary namespace-wrapped tool format on both request and response. |
-| Image generation (`image_gen`) fails, e.g. `404 Not Found` on `/v1/images/generations` | **Known limitation, no workaround.** `image_gen` calls an OpenAI image backend relay-ai doesn't implement, and most registry models can't generate images regardless. Works normally with Codex's native OpenAI/ChatGPT models. |
+| Image generation (`image_gen`) returns `404 Not Found` in Relay-only mode | Launch Codex CLI or ChatGPT Desktop with `--with-native` and sign in to ChatGPT. Mixed mode sends the built-in image tool requests to the native OpenAI backend. |
 | `Fatal error: remote compaction v2 expected exactly one compaction output item` | Update relay-ai — fixed by synthesizing the single `compaction` output item Codex's v2 compaction parser requires (previously the proxy replied with a normal message, which Codex rejected outright). |
 
 ---

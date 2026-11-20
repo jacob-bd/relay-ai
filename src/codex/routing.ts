@@ -63,14 +63,20 @@ export function mixedProxyBaseUrl(port: number, capability: string): string {
   return `http://127.0.0.1:${port}/_relay-codex/${capability}`;
 }
 
+export type NativeCodexImagePath = '/v1/images/generations' | '/v1/images/edits';
+
+export function isNativeCodexImagePath(path: string): path is NativeCodexImagePath {
+  return path === '/v1/images/generations' || path === '/v1/images/edits';
+}
+
 export function parseMixedProxyPath(
   pathname: string,
   capability: string,
-): { capability: string; suffix: '/v1/models' | '/v1/responses' | '/health' } | null {
+): { capability: string; suffix: '/v1/models' | '/v1/responses' | '/health' | NativeCodexImagePath } | null {
   const prefix = `/_relay-codex/${capability}`;
   if (!pathname.startsWith(prefix)) return null;
   const suffix = pathname.slice(prefix.length);
-  if (suffix !== '/v1/models' && suffix !== '/v1/responses' && suffix !== '/health') return null;
+  if (suffix !== '/v1/models' && suffix !== '/v1/responses' && suffix !== '/health' && !isNativeCodexImagePath(suffix)) return null;
   return { capability, suffix };
 }
 

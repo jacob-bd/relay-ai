@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import sharp from 'sharp';
-import { fitImagesInInput, imagePolicyForRoute, reactiveImagePolicyForRoute, GENERIC_IMAGE_POLICY, GENERIC_REACTIVE_IMAGE_POLICY, REACTIVE_IMAGE_POLICY, __resetImageFitForTests, type ImageFitPolicy } from '../src/image-fit.js';
+import { fitImagesInInput, imagePolicyForRoute, reactiveImagePolicyForRoute, CLAUDE_TOTAL_IMAGE_BASE64_LIMIT, GENERIC_IMAGE_POLICY, GENERIC_REACTIVE_IMAGE_POLICY, REACTIVE_IMAGE_POLICY, __resetImageFitForTests, type ImageFitPolicy } from '../src/image-fit.js';
 import { parseImageTooLarge } from '../src/codex-context-budget.js';
 
 const CAP = 10_485_760 - 64 * 1024;
@@ -78,7 +78,11 @@ describe('fitImagesInInput', () => {
 
 describe('imagePolicyForRoute', () => {
   it('uses 2576 for new Claude models, 1568 for older, the generic policy for everything else', () => {
-    expect(imagePolicyForRoute({ npm: '@ai-sdk/google-vertex/anthropic', modelId: 'vertex-anthropic__claude-opus-5-5' })).toEqual({ maxLongEdge: 2576, maxBase64Bytes: CAP });
+    expect(imagePolicyForRoute({ npm: '@ai-sdk/google-vertex/anthropic', modelId: 'vertex-anthropic__claude-opus-5-5' })).toEqual({
+      maxLongEdge: 2576,
+      maxBase64Bytes: CAP,
+      maxTotalBase64Bytes: CLAUDE_TOTAL_IMAGE_BASE64_LIMIT,
+    });
     expect(imagePolicyForRoute({ npm: '@ai-sdk/anthropic', modelId: 'claude-sonnet-4-6' })?.maxLongEdge).toBe(1568);
     expect(imagePolicyForRoute({ npm: '@ai-sdk/anthropic', modelId: 'claude-sonnet-5' })?.maxLongEdge).toBe(2576);
     expect(imagePolicyForRoute({ npm: '@ai-sdk/openai', modelId: 'gpt-6.1-sol' })).toBe(GENERIC_IMAGE_POLICY);
@@ -87,8 +91,22 @@ describe('imagePolicyForRoute', () => {
 
   it('picks the reactive (retry) policy per route kind', () => {
     expect(reactiveImagePolicyForRoute({ npm: '@ai-sdk/anthropic', modelId: 'claude-opus-5-5' })).toBe(REACTIVE_IMAGE_POLICY);
+    expect(REACTIVE_IMAGE_POLICY.maxTotalBase64Bytes).toBeLessThan(CLAUDE_TOTAL_IMAGE_BASE64_LIMIT);
     expect(reactiveImagePolicyForRoute({ npm: '@ai-sdk/openai-compatible', modelId: 'qwen3.8' })).toBe(GENERIC_REACTIVE_IMAGE_POLICY);
   });
+
+  it('caps combined image bytes on Vertex Claude turns where every image is under the single-image cap', async () => {
+    const medium = await noisePng(1600, 1000);
+    expect(b64len(medium)).toBeLessThan(CAP);
+    const copies = Math.ceil(CLAUDE_TOTAL_IMAGE_BASE64_LIMIT / b64len(medium)) + 1;
+    const items = Array.from({ length: copies }, () => userImage(medium));
+    const claudePolicy = imagePolicyForRoute({ npm: '@ai-sdk/google-vertex/anthropic', modelId: 'vertex-anthropic__claude-opus-5-5' });
+    const { input, resized, omitted } = await fitImagesInInput(items as never, claudePolicy);
+    expect(resized).toBe(copies);
+    expect(omitted).toBe(0);
+    const total = input.reduce((sum, item) => sum + b64len(urlOf(item)), 0);
+    expect(total).toBeLessThanOrEqual(CLAUDE_TOTAL_IMAGE_BASE64_LIMIT);
+  }, 60_000);
 });
 
 describe('parseImageTooLarge', () => {

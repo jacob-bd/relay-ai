@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.22.10] - 2026-11-19
+
+### Fixed
+
+- **Codex built-in image generation and editing (`image_gen`) now work in mixed mode (`--with-native`).** Mixed-mode Codex CLI and ChatGPT Desktop sessions now forward `POST /v1/images/generations` and `POST /v1/images/edits` (with the allowlisted `x-codex-image-turn-id` header) to the signed-in native ChatGPT backend, including when a Relay model handles the conversation. Relay-only mode still returns `404 Not Found`.
+- **Multi-image Vertex Claude turns no longer fail with `Bad Request (HTTP 400)`.** Claude routes now cap combined inline image base64 bytes at `18 MB` per request (`10 MB` on reactive retry) so histories with many individually under-10 MB images shrink under Vertex AI's 30 MB / Anthropic's 32 MB request limit while keeping typical 1–3 image turns byte-identical for prompt caching.
+- **Google/Vertex JSON-array error bodies (`[{"error": {"message": "..."}}]`) now surface their real error message** instead of collapsing to generic `Bad Request (HTTP 400)`.
+
 ## [0.22.9] - 2026-11-17
 
 ### Fixed

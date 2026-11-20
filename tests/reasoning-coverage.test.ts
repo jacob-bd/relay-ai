@@ -22,8 +22,6 @@ const DECLARED_DROPS: Record<string, string[]> = {
 };
 
 const MODEL_DECLARED_DROPS = [
-  // The Mistral SDK accepts only high and none for reasoningEffort.
-  { providerId: 'mistral', modelId: 'mistral-large-latest', levels: ['low', 'medium'] },
   // Relay's GLM 5.3 profile has no verified wire mapping for disabling effort.
   { providerId: 'kilo', modelId: 'z-ai/glm-5.3-fast', levels: ['none'] },
 ];
@@ -80,8 +78,8 @@ const EXCLUDED_MODELS: ModelExclusion[] = [
   },
   {
     provider: 'mistral',
-    match: /^mistral-large-4(?:-|$)/,
-    reason: "models.dev declares low/medium/high, but Mistral's reasoningEffort wire is none/high only — Relay offers exactly those and invents no low/medium mapping until verified live",
+    match: /^mistral-large-(?:4(?:-|$)|latest$)/,
+    reason: "models.dev declares low/medium/high, but @ai-sdk/mistral currently omits reasoning_effort for mistral-large-* models — needs SDK/live wire verification",
   },
   {
     provider: 'mistral',

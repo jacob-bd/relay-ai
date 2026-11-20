@@ -33,9 +33,11 @@ export interface ImageFitPolicy {
 export const ANTHROPIC_IMAGE_BASE64_LIMIT = 10_485_760;
 const HEADROOM = 64 * 1024;
 const CAP = ANTHROPIC_IMAGE_BASE64_LIMIT - HEADROOM;
-/** Used after any provider rejects an image, whatever the route. */
-export const REACTIVE_IMAGE_POLICY: ImageFitPolicy = { maxLongEdge: 2576, maxBase64Bytes: CAP };
 const MB = 1024 * 1024;
+/** Whole-request cap for Claude routes so multi-image turns stay under Vertex's 30 MB / Anthropic's 32 MB body limit. */
+export const CLAUDE_TOTAL_IMAGE_BASE64_LIMIT = 18 * MB;
+/** Used after any provider rejects an image, whatever the route. */
+export const REACTIVE_IMAGE_POLICY: ImageFitPolicy = { maxLongEdge: 2576, maxBase64Bytes: CAP, maxTotalBase64Bytes: 10 * MB };
 /** Non-Claude routes, every turn: keeps a whole request well under ~10 MB gateway body caps. */
 export const GENERIC_IMAGE_POLICY: ImageFitPolicy = { maxLongEdge: 2048, maxBase64Bytes: 3 * MB, maxTotalBase64Bytes: 7 * MB, soft: true };
 /** Non-Claude routes, after the provider refused the request size: tighter, one retry. */
@@ -63,7 +65,11 @@ function isClaudeImageRoute(route: ImageRoute): boolean {
 
 export function imagePolicyForRoute(route: ImageRoute): ImageFitPolicy {
   if (!isClaudeImageRoute(route)) return GENERIC_IMAGE_POLICY;
-  return { maxLongEdge: claudeLongEdge(route.upstreamModelId ?? route.modelId), maxBase64Bytes: CAP };
+  return {
+    maxLongEdge: claudeLongEdge(route.upstreamModelId ?? route.modelId),
+    maxBase64Bytes: CAP,
+    maxTotalBase64Bytes: CLAUDE_TOTAL_IMAGE_BASE64_LIMIT,
+  };
 }
 
 /** Policy for the single retry after a provider refused an image or the request size. */

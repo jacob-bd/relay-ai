@@ -52,8 +52,8 @@ import {
 import { silenceSdkWarnings } from './sdk-adapter.js';
 import { formatUpstreamError, upstreamHttpStatus } from './codex/upstream-error.js';
 import {getCodexProxyDebugLogPath, makeTraceLogger, resetCodexBodyDumpLog, appendCodexBodyDump, localIsoTimestamp } from './trace-log.js';
-import { classifyCodexMixedDispatch, parseMixedProxyPath } from './codex/routing.js';
-import { forwardNativeCodexHttp, allowlistedNativeHeaders, nativeResponsesWebSocketOptions, prepareNativeCodexBody, NATIVE_CODEX_RESPONSES_URL } from './codex/native-forward.js';
+import { classifyCodexMixedDispatch, isNativeCodexImagePath, parseMixedProxyPath } from './codex/routing.js';
+import { forwardNativeCodexHttp, allowlistedNativeHeaders, nativeResponsesWebSocketOptions, prepareNativeCodexBody } from './codex/native-forward.js';
 import {
   createNativePayloadRelay,
   resolveRoutedCollaborationInput,
@@ -853,7 +853,7 @@ export async function startCodexProxy(
       const effectivePath = mixedPath?.suffix ?? url;
 
       if (debug) {
-        log(`-> ${req.method} ${url} content-type=${req.headers['content-type'] ?? '(none)'} content-encoding=${req.headers['content-encoding'] ?? '(none)'} content-length=${req.headers['content-length'] ?? '(none)'}`);
+        log(`-> ${req.method} ${effectivePath} content-type=${req.headers['content-type'] ?? '(none)'} content-encoding=${req.headers['content-encoding'] ?? '(none)'} content-length=${req.headers['content-length'] ?? '(none)'}`);
       }
 
       if (!requireAuth && req.method === 'POST') {
@@ -935,6 +935,42 @@ export async function startCodexProxy(
           created: Math.floor(Date.now() / 1000),
           owned_by: route.providerId || 'relay-ai',
         });
+        return;
+      }
+
+      if (req.method === 'POST' && mixedNative && mixedPath && isNativeCodexImagePath(mixedPath.suffix)) {
+        let body: string;
+        try {
+          body = await readBody(req);
+        } catch (err) {
+          if (debug) log(`Error: failed to read/decode request body on POST ${effectivePath}: ${formatUpstreamError(err)} content-encoding=${req.headers['content-encoding'] ?? '(none)'}`);
+          if (!res.destroyed) sendJson(res, 400, { error: { message: 'Invalid request body', type: 'invalid_request_error' } });
+          return;
+        }
+
+        const controller = new AbortController();
+        res.once('close', () => { if (!res.writableFinished) controller.abort(); });
+        try {
+          const nativeResponse = await forwardNativeCodexHttp({
+            body,
+            inboundHeaders: req.headers,
+            path: mixedPath.suffix,
+            nativeBaseUrl: mixedNative.nativeBaseUrl,
+            signal: controller.signal,
+            fetchImpl: mixedNative.nativeFetchImpl,
+          });
+          const headers: Record<string, string> = {};
+          for (const name of ['content-type', 'x-codex-imagegen-request-id', 'retry-after']) {
+            const value = nativeResponse.headers.get(name);
+            if (value !== null) headers[name] = value;
+          }
+          const responseBody = Buffer.from(await nativeResponse.arrayBuffer());
+          res.writeHead(nativeResponse.status, headers);
+          res.end(responseBody);
+        } catch (err) {
+          if (debug) log(`Error: native Codex image request failed on POST ${effectivePath}: ${formatUpstreamError(err)}`);
+          if (!res.destroyed) sendJson(res, 502, { error: { message: 'Native Codex image request failed', type: 'upstream_error' } });
+        }
         return;
       }
 
@@ -1046,9 +1082,7 @@ export async function startCodexProxy(
               const nativeResponse = await forwardNativeCodexHttp({
                 body: rawBody,
                 inboundHeaders: req.headers,
-                nativeUrl: mixedNative.nativeBaseUrl
-                  ? `${mixedNative.nativeBaseUrl.replace(/\/$/, '')}/responses`
-                  : NATIVE_CODEX_RESPONSES_URL,
+                nativeBaseUrl: mixedNative.nativeBaseUrl,
                 signal: controller.signal,
                 fetchImpl: mixedNative.nativeFetchImpl,
               });
