@@ -74,13 +74,13 @@ import {
   supportsClaudeTransparentMode,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-7IK63RCY.js";
+} from "./chunk-VL35VIGE.js";
 import {
   extractApiKey,
   readBody,
   sendJson,
   warnDisabledPoolMembers
-} from "./chunk-QP6QJTTA.js";
+} from "./chunk-PQ4VCNTJ.js";
 import {
   printUiUrlLast
 } from "./chunk-4BVKM3FX.js";
@@ -108,7 +108,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-PHCKBXWY.js";
+} from "./chunk-MUL56HX6.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -164,7 +164,7 @@ import {
   translateResponsesRequest,
   writeResponsesCreated,
   writeResponsesErrorStream
-} from "./chunk-KU4ZW3Z5.js";
+} from "./chunk-6PQQ4LAX.js";
 import {
   OPENCODE_SESSION_HEADER,
   PoolHealthStore,
@@ -203,19 +203,19 @@ import {
   retryPoolFailure,
   routableModelsForTarget,
   toOAuthRegistryId
-} from "./chunk-3RVWRSAD.js";
+} from "./chunk-VX6SGCM7.js";
 import {
   effectiveProviderBaseUrl,
   isLikelyPlaceholderKey,
   resolveProviderTemplate,
   resolveRefreshCredential,
   syntheticTemplate
-} from "./chunk-76J6MHIY.js";
+} from "./chunk-CFSNPQWS.js";
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-DK673ZX2.js";
-import "./chunk-5POQZTUA.js";
+} from "./chunk-YN5ZPJF3.js";
+import "./chunk-7NWPPHUY.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -226,7 +226,7 @@ import {
   formatUpstreamError,
   formatUpstreamErrorTrace,
   upstreamHttpStatus
-} from "./chunk-WHW3PFHG.js";
+} from "./chunk-52CL3M64.js";
 import {
   EFFORT_RANK,
   VERTEX_ANTHROPIC_PROVIDER_ID,
@@ -291,7 +291,7 @@ import {
   vertexModelDisplayName,
   withAnthropicThinkingDisplay,
   writeSecureLogLine
-} from "./chunk-4MY652T6.js";
+} from "./chunk-YXREHFK3.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -329,7 +329,7 @@ import {
   saveToCredentialStore,
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth
-} from "./chunk-3PKE7YOS.js";
+} from "./chunk-7RSJEDK4.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -1839,11 +1839,14 @@ function createMixedProxyCapability() {
 function mixedProxyBaseUrl(port, capability) {
   return `http://127.0.0.1:${port}/_relay-codex/${capability}`;
 }
+function isNativeCodexImagePath(path3) {
+  return path3 === "/v1/images/generations" || path3 === "/v1/images/edits";
+}
 function parseMixedProxyPath(pathname, capability) {
   const prefix = `/_relay-codex/${capability}`;
   if (!pathname.startsWith(prefix)) return null;
   const suffix = pathname.slice(prefix.length);
-  if (suffix !== "/v1/models" && suffix !== "/v1/responses" && suffix !== "/health") return null;
+  if (suffix !== "/v1/models" && suffix !== "/v1/responses" && suffix !== "/health" && !isNativeCodexImagePath(suffix)) return null;
   return { capability, suffix };
 }
 function codexCompatibleProviders(providers, agent = "codex") {
@@ -3473,7 +3476,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-WX2W5PER.js");
+      const { testModel } = await import("./test-model-64LXO6XY.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -3697,8 +3700,9 @@ import { createHash } from "crypto";
 var ANTHROPIC_IMAGE_BASE64_LIMIT = 10485760;
 var HEADROOM = 64 * 1024;
 var CAP = ANTHROPIC_IMAGE_BASE64_LIMIT - HEADROOM;
-var REACTIVE_IMAGE_POLICY = { maxLongEdge: 2576, maxBase64Bytes: CAP };
 var MB = 1024 * 1024;
+var CLAUDE_TOTAL_IMAGE_BASE64_LIMIT = 18 * MB;
+var REACTIVE_IMAGE_POLICY = { maxLongEdge: 2576, maxBase64Bytes: CAP, maxTotalBase64Bytes: 10 * MB };
 var GENERIC_IMAGE_POLICY = { maxLongEdge: 2048, maxBase64Bytes: 3 * MB, maxTotalBase64Bytes: 7 * MB, soft: true };
 var GENERIC_REACTIVE_IMAGE_POLICY = { maxLongEdge: 1568, maxBase64Bytes: 1.5 * MB, maxTotalBase64Bytes: 4 * MB, soft: true };
 var MIN_IMAGE_SHARE = 256 * 1024;
@@ -3718,7 +3722,11 @@ function isClaudeImageRoute(route) {
 }
 function imagePolicyForRoute(route) {
   if (!isClaudeImageRoute(route)) return GENERIC_IMAGE_POLICY;
-  return { maxLongEdge: claudeLongEdge(route.upstreamModelId ?? route.modelId), maxBase64Bytes: CAP };
+  return {
+    maxLongEdge: claudeLongEdge(route.upstreamModelId ?? route.modelId),
+    maxBase64Bytes: CAP,
+    maxTotalBase64Bytes: CLAUDE_TOTAL_IMAGE_BASE64_LIMIT
+  };
 }
 function reactiveImagePolicyForRoute(route) {
   return isClaudeImageRoute(route) ? REACTIVE_IMAGE_POLICY : GENERIC_REACTIVE_IMAGE_POLICY;
@@ -4178,7 +4186,7 @@ function hasMatchingCheckpoint(key, input) {
 }
 
 // src/codex/native-forward.ts
-var NATIVE_CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
+var NATIVE_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
 var NATIVE_FORWARD_HEADERS = /* @__PURE__ */ new Set([
   "authorization",
   "chatgpt-account-id",
@@ -4193,6 +4201,7 @@ var NATIVE_FORWARD_HEADERS = /* @__PURE__ */ new Set([
   "user-agent",
   "version",
   "x-client-request-id",
+  "x-codex-image-turn-id",
   "x-codex-turn-metadata",
   "x-codex-turn-state",
   "x-codex-window-id",
@@ -4267,10 +4276,13 @@ async function forwardNativeCodexHttp(options) {
   const fetchImpl = options.fetchImpl ?? fetch;
   const headers = allowlistedNativeHeaders(options.inboundHeaders);
   headers["content-type"] = headerValue(options.inboundHeaders, "content-type") ?? "application/json";
-  return fetchImpl(options.nativeUrl ?? NATIVE_CODEX_RESPONSES_URL, {
+  const path3 = options.path ?? "/v1/responses";
+  const baseUrl = (options.nativeBaseUrl ?? NATIVE_CODEX_BASE_URL).replace(/\/$/, "");
+  const body = path3 === "/v1/responses" ? prepareNativeHttpBody(options.body) : options.body;
+  return fetchImpl(`${baseUrl}${path3.slice("/v1".length)}`, {
     method: "POST",
     headers,
-    body: prepareNativeHttpBody(options.body),
+    body,
     signal: options.signal,
     redirect: "manual"
   });
@@ -5076,7 +5088,7 @@ async function startCodexProxy(routes, options = {}) {
       }
       const effectivePath = mixedPath?.suffix ?? url;
       if (debug) {
-        log15(`-> ${req.method} ${url} content-type=${req.headers["content-type"] ?? "(none)"} content-encoding=${req.headers["content-encoding"] ?? "(none)"} content-length=${req.headers["content-length"] ?? "(none)"}`);
+        log15(`-> ${req.method} ${effectivePath} content-type=${req.headers["content-type"] ?? "(none)"} content-encoding=${req.headers["content-encoding"] ?? "(none)"} content-length=${req.headers["content-length"] ?? "(none)"}`);
       }
       if (!requireAuth && req.method === "POST") {
         const origin = req.headers.origin;
@@ -5151,6 +5163,42 @@ async function startCodexProxy(routes, options = {}) {
           created: Math.floor(Date.now() / 1e3),
           owned_by: route.providerId || "relay-ai"
         });
+        return;
+      }
+      if (req.method === "POST" && mixedNative && mixedPath && isNativeCodexImagePath(mixedPath.suffix)) {
+        let body;
+        try {
+          body = await readBody(req);
+        } catch (err) {
+          if (debug) log15(`Error: failed to read/decode request body on POST ${effectivePath}: ${formatUpstreamError(err)} content-encoding=${req.headers["content-encoding"] ?? "(none)"}`);
+          if (!res.destroyed) sendJson(res, 400, { error: { message: "Invalid request body", type: "invalid_request_error" } });
+          return;
+        }
+        const controller = new AbortController();
+        res.once("close", () => {
+          if (!res.writableFinished) controller.abort();
+        });
+        try {
+          const nativeResponse = await forwardNativeCodexHttp({
+            body,
+            inboundHeaders: req.headers,
+            path: mixedPath.suffix,
+            nativeBaseUrl: mixedNative.nativeBaseUrl,
+            signal: controller.signal,
+            fetchImpl: mixedNative.nativeFetchImpl
+          });
+          const headers = {};
+          for (const name of ["content-type", "x-codex-imagegen-request-id", "retry-after"]) {
+            const value = nativeResponse.headers.get(name);
+            if (value !== null) headers[name] = value;
+          }
+          const responseBody = Buffer.from(await nativeResponse.arrayBuffer());
+          res.writeHead(nativeResponse.status, headers);
+          res.end(responseBody);
+        } catch (err) {
+          if (debug) log15(`Error: native Codex image request failed on POST ${effectivePath}: ${formatUpstreamError(err)}`);
+          if (!res.destroyed) sendJson(res, 502, { error: { message: "Native Codex image request failed", type: "upstream_error" } });
+        }
         return;
       }
       if (req.method === "POST" && effectivePath === "/v1/responses") {
@@ -5268,7 +5316,7 @@ async function startCodexProxy(routes, options = {}) {
               const nativeResponse = await forwardNativeCodexHttp({
                 body: rawBody,
                 inboundHeaders: req.headers,
-                nativeUrl: mixedNative.nativeBaseUrl ? `${mixedNative.nativeBaseUrl.replace(/\/$/, "")}/responses` : NATIVE_CODEX_RESPONSES_URL,
+                nativeBaseUrl: mixedNative.nativeBaseUrl,
                 signal: controller.signal,
                 fetchImpl: mixedNative.nativeFetchImpl
               });
@@ -18902,7 +18950,7 @@ Options:
       return 0;
     }
     if (parsed.uiAction === "stop") {
-      const { stopUiServer } = await import("./ui-command-T5H3SU7Y.js");
+      const { stopUiServer } = await import("./ui-command-XRVSB5UE.js");
       const result = await stopUiServer();
       if (result.stopped) {
         console.log(`
@@ -18915,11 +18963,11 @@ Options:
 `);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-T5H3SU7Y.js");
+    const { runUiCommand } = await import("./ui-command-XRVSB5UE.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode, background: parsed.uiBackground });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-WUYDTUD2.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-HRIHAYBM.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;
