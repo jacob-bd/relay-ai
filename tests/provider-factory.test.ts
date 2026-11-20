@@ -404,6 +404,11 @@ describe('declared-first effort resolution', () => {
     expect(effortProviderOptions('@ai-sdk/anthropic', 'xhigh', 'anthropic-antigravity__gemini-4-hydrogen-medium', {
       providerId: 'antigravity',
     })).toEqual({ anthropic: { effort: 'xhigh' } });
+
+    const neonCaps = getReasoningCapabilities('@ai-sdk/google', 'gemini-4-neon');
+    expect(neonCaps.levels).toEqual(['low', 'medium', 'high', 'xhigh']);
+    expect(effortProviderOptions('@ai-sdk/google', 'xhigh', 'gemini-4-neon'))
+      .toEqual({ google: { thinkingConfig: { thinkingLevel: 'xhigh', includeThoughts: true } } });
   });
 
   it('keeps Gemini 2.5 on its budget mapping even when effort levels are declared', () => {

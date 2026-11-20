@@ -2,6 +2,10 @@
 
 ## [0.22.10] - 2026-11-19
 
+### Added
+
+- **Gemini 4 Neon `xhigh` reasoning effort.** Wired `gemini-4-neon` into the same `low | medium | high | xhigh` path as `gemini-4-hydrogen` across Google, OpenCode Zen, GitHub Copilot, and bridged Antigravity routes.
+
 ### Fixed
 
 - **Codex built-in image generation and editing (`image_gen`) now work in mixed mode (`--with-native`).** Mixed-mode Codex CLI and ChatGPT Desktop sessions now forward `POST /v1/images/generations` and `POST /v1/images/edits` (with the allowlisted `x-codex-image-turn-id` header) to the signed-in native ChatGPT backend, including when a Relay model handles the conversation. Relay-only mode still returns `404 Not Found`.

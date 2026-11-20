@@ -1257,15 +1257,19 @@ function stripGeminiRoutePrefix(modelId: string): string {
 }
 
 /**
- * Gemini 4 Hydrogen adds an `Extra` (`xhigh`) thinkingLevel rung beyond
- * the standard Gemini 3/4 `low | medium | high` ladder. Other Gemini 3/4
- * models (e.g. Gemini 4 Argon, Gemini 3.8 Flash) reject `"xhigh"` with 400.
+ * Gemini 4 Hydrogen and Gemini 4 Neon add an `Extra` (`xhigh`) thinkingLevel
+ * rung beyond the standard Gemini 3/4 `low | medium | high` ladder. Other
+ * Gemini 3/4 models (e.g. Gemini 4 Argon, Gemini 3.8 Flash) reject `"xhigh"`
+ * with 400.
  */
 export function isGeminiHydrogenModel(modelId: string): boolean {
   const bare = stripGeminiRoutePrefix(modelId);
   return bare === 'gemini-4-hydrogen'
     || bare.startsWith('gemini-4-hydrogen-')
-    || bare.startsWith('gemini-4-hydrogen[');
+    || bare.startsWith('gemini-4-hydrogen[')
+    || bare === 'gemini-4-neon'
+    || bare.startsWith('gemini-4-neon-')
+    || bare.startsWith('gemini-4-neon[');
 }
 
 function isBridgedAntigravityGeminiHydrogen(
