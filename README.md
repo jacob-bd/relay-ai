@@ -17,9 +17,9 @@
 
 📺 **Demos / Use Cases**
 
-| **Free Model Pool** | **Multiple Accounts** | **Remote Codex + Any Model** | **Custom Model IDs** |
-|:---:|:---:|:---:|:---:|
-| [![Free Model Pool Demo](https://img.youtube.com/vi/bsbBMykAIfY/mqdefault.jpg)](https://youtu.be/bsbBMykAIfY) | [![Multiple Accounts Demo](https://img.youtube.com/vi/7qdC0aDQ1wc/mqdefault.jpg)](https://youtu.be/7qdC0aDQ1wc) | [![Remote Codex Demo](https://img.youtube.com/vi/KGafe-_rli0/mqdefault.jpg)](https://youtu.be/KGafe-_rli0) | [![Custom Model IDs Demo](https://img.youtube.com/vi/RjqnvFWGEM8/mqdefault.jpg)](https://youtu.be/RjqnvFWGEM8) |
+| **Free AI: All Tools + Agents** | **Free Model Pool** | **Multiple Accounts** | **Remote Codex + Any Model** | **Custom Model IDs** |
+|:---:|:---:|:---:|:---:|:---:|
+| [![Free AI in Claude Code, Codex, Antigravity & OpenClaw](https://img.youtube.com/vi/ShaMPXhFlRo/mqdefault.jpg)](https://www.youtube.com/watch?v=ShaMPXhFlRo) | [![Free Model Pool Demo](https://img.youtube.com/vi/bsbBMykAIfY/mqdefault.jpg)](https://youtu.be/bsbBMykAIfY) | [![Multiple Accounts Demo](https://img.youtube.com/vi/7qdC0aDQ1wc/mqdefault.jpg)](https://youtu.be/7qdC0aDQ1wc) | [![Remote Codex Demo](https://img.youtube.com/vi/KGafe-_rli0/mqdefault.jpg)](https://youtu.be/KGafe-_rli0) | [![Custom Model IDs Demo](https://img.youtube.com/vi/RjqnvFWGEM8/mqdefault.jpg)](https://youtu.be/RjqnvFWGEM8) |
 
 | **Claude Code / Cowork / Desktop** | **Codex CLI & Desktop App** | **Gemini CLI** | **UI & Antigravity** | **Server Gateway** |
 |:---:|:---:|:---:|:---:|:---:|
