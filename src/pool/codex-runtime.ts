@@ -17,8 +17,8 @@ import { poolErrorDetail } from './diagnostic.js';
 export const FREE_POOL_MODEL_ID = 'relay-free-pool';
 export const FREE_POOL_PROVIDER_ID = 'relay-free-pool';
 export const DEFAULT_POOL_LIMITS: PoolLimits = {
-  attempts: MAX_POOL_ATTEMPTS, firstContentMs: 20_000, idleMs: 20_000,
-  totalMs: 60_000, bufferBytes: 65_536, cleanupMs: 1000,
+  attempts: MAX_POOL_ATTEMPTS, firstContentMs: 15_000, idleMs: 20_000,
+  totalMs: 90_000, bufferBytes: 65_536, cleanupMs: 1000,
 };
 export interface CodexPoolRoute extends DispatchRoute { identity: PoolRouteIdentity; toolContext?: CodexToolContext; }
 /** Shared runtime for HTTP and WebSocket adapters. Neither transport owns pool history. */

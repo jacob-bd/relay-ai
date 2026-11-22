@@ -1,4 +1,5 @@
 import { CLAUDE_POOL_MODEL_ID, type ClaudePoolRuntime } from './pool/claude-runtime.js';
+import { ANTHROPIC_SSE_PING, startPoolSseKeepalive } from './pool/keepalive.js';
 // src/proxy.ts — Local Anthropic-to-OpenAI translation proxy
 // Adapted from cucoleadan/opencode-cowork-proxy (MIT)
 import { createServer } from 'node:http';
@@ -271,9 +272,13 @@ export function startProxyCatalog(
         || routeLookupIds(String(originalModel)).includes(CLAUDE_POOL_MODEL_ID))) {
         const abort = new AbortController();
         res.once('close', () => { if (!res.writableFinished) abort.abort(); });
+        const keepalive = clientWantsStream
+          ? startPoolSseKeepalive(res, { frame: ANTHROPIC_SSE_PING })
+          : undefined;
         try {
           const sessionId = extractConversationId(req.headers, anthropicBody);
           const result = await options.pool.runtime.serve(anthropicBody, chunk => {
+            keepalive?.stop();
             if (res.destroyed) throw new Error('Client disconnected');
             if (!res.headersSent) {
               res.writeHead(200, {
@@ -284,18 +289,32 @@ export function startProxyCatalog(
             }
             res.write(chunk);
           }, abort.signal, sessionId, line => plog(() => line));
+          keepalive?.stop();
           if (result.ok) {
             if (result.message) sendJson(res, 200, result.message);
             else res.end();
           } else if (result.committed) {
-            res.end();
+            if (!res.writableEnded) res.end();
+          } else if (res.headersSent) {
+            // Keepalive already sent 200 SSE headers before all pool members failed:
+            // emit a spec-compliant Anthropic SSE error event so the SDK surfaces it cleanly.
+            if (!res.destroyed && !res.writableEnded) {
+              res.write(`event: error\ndata: ${JSON.stringify({ type: 'error', error: result.error })}\n\n`);
+              res.end();
+            }
           } else {
             anthropicError(res, result.status, result.error.message);
           }
         } catch (error) {
+          keepalive?.stop();
           const message = error instanceof Error ? error.message : String(error);
           if (!res.headersSent) anthropicError(res, 502, message);
-          else if (!res.writableEnded) res.end();
+          else if (!res.destroyed && !res.writableEnded) {
+            res.write(`event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: 'api_error', message } })}\n\n`);
+            res.end();
+          }
+        } finally {
+          keepalive?.stop();
         }
         return;
       }

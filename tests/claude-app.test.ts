@@ -471,6 +471,29 @@ describe('runClaudeAppCommand', () => {
     expect(state.startServerOptions.pool).toBeUndefined();
   });
 
+  it('starts Claude Desktop on the pool when --pool is passed even if additive pool is disabled', async () => {
+    const selected = appProvider('selected', [appModel('selected-model')]);
+    const poolProvider = freePoolProvider();
+    state.providers = [selected, poolProvider];
+    state.preferences = {
+      favoriteModels: [],
+      freePool: {
+        enabled: false,
+        members: [poolMember],
+        effort: 'auto',
+        receipts: [poolReceipt(poolProvider)],
+      },
+    };
+
+    const code = await runClaudeAppCommand([], { pool: true });
+
+    expect(code).toBe(0);
+    const catalog = state.startServerOptions.catalog.list();
+    expect(catalog.map((model: ServerModelInfo) => model.id)).toEqual(['claude-pool']);
+    expect(state.startServerOptions.pool).toBeDefined();
+    expect(state.startServerOptions.pool.displayName).toBe('Relay Free Pool');
+  });
+
   it('reserves a catalog slot for the pool without exceeding 50 models', async () => {
     const selectedModel = appModel('selected-model');
     const favoriteModels = Array.from({ length: 50 }, (_, index) => appModel(`favorite-${index}`));

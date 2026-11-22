@@ -8,6 +8,7 @@ import { poolFreeStatus } from '../free-models.js';
 import { contextFloorForTarget, meetsContextFloor } from '../target-compatibility.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from '../types.js';
 import { verifyPoolMember, type EnrollResult } from './enroll.js';
+import { poolFailure } from './errors.js';
 import { probePoolModel, probePoolEffort, type PoolProbeResult } from './probe.js';
 
 /** Membership may be saved before its context size has been measured. */
@@ -76,6 +77,12 @@ export async function verifyConfiguredPoolMember(
     });
   } catch (error) {
     // A probe failure is pool evidence only; the caller's ordinary Test stays successful.
-    return { member, status: 'skipped', reason: 'probe-failed', diagnostic: poolDiagnostic(error) };
+    return {
+      member,
+      status: 'skipped',
+      reason: 'probe-failed',
+      diagnostic: poolDiagnostic(error),
+      poolFailure: poolFailure(error),
+    };
   }
 }

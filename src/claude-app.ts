@@ -71,6 +71,7 @@ ${pc.bold('Usage:')}
 
 ${pc.bold('Options:')}
   --trace      Write proxy debug logs to ~/.relay-ai/logs/
+  --pool       Launch the shared free-model pool (requires relay-ai pool verify)
   --restore    Restore Claude Desktop config after an interrupted app session
   --help       Show this command help
   --version    Show version
@@ -94,7 +95,7 @@ function providerForClaudePicker(provider: LocalProvider): LocalProvider {
   return { ...provider, models: routableModelsForProvider(provider, 'claude-app') };
 }
 
-export async function runClaudeAppCommand(args: string[], boot?: { launchProvider?: string; launchModel?: string }): Promise<number> {
+export async function runClaudeAppCommand(args: string[], boot?: { launchProvider?: string; launchModel?: string; pool?: boolean }): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(claudeAppHelpText());
     return 0;
@@ -167,20 +168,22 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
   // pool shares the Claude Code eligibility gates, but it is fed the default
   // registry catalog that verification used (not the Claude-Desktop-filtered
   // catalog), so endpoint receipts match.
+  const explicitPool = boot?.pool === true
+    || (boot?.launchProvider === 'relay-free-pool' && boot?.launchModel === 'relay-free-pool');
   let autoPool: ClaudeAutoPool | undefined;
-  if (prefs.freePool?.enabled === true) {
+  if (prefs.freePool?.enabled === true || explicitPool) {
     try {
       const poolProviders = await fetchProviderCatalog();
-      autoPool = prepareClaudeAutoPool(prefs, poolProviders);
+      autoPool = prepareClaudeAutoPool(prefs, poolProviders, Date.now(), { force: explicitPool });
       if (autoPool) await warnDisabledPoolMembers(poolProviders, autoPool.pool);
     } catch (err) {
       p.log.warn(`Relay Free Pool is enabled but could not be prepared: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
-  if (boot?.launchProvider === 'relay-free-pool' && boot.launchModel === 'relay-free-pool') {
+  if (explicitPool) {
     if (!autoPool) {
-      p.log.error('Relay Free Pool is not ready for Claude Desktop. Turn it on and add a tested member in relay-ai ui (Free Pool).');
+      p.log.error('Relay Free Pool is not ready for Claude Desktop. Add a verified member with relay-ai pool verify or relay-ai ui (Free Pool).');
       return 1;
     }
     startOnPool = true;

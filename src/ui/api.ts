@@ -1,7 +1,7 @@
 import { parseFreePool } from '../pool/membership.js';
 import { clearPoolActivity } from '../pool/activity.js';
 import { poolCatalogEntry } from '../pool/catalog.js';
-import { handlePoolApi, verifyUiPoolMember, invalidateUiPoolMember } from './pool-api.js';
+import { handlePoolApi, verifyUiPoolMember, invalidateUiPoolMember, recordUiPoolTestFailure } from './pool-api.js';
 import { supportsAdditionalOAuthAccounts } from '../oauth/types.js';
 import { isSubscriptionOAuthAcknowledgement, subscriptionOAuthRiskLines } from '../oauth/risk-notice.js';
 import { readOAuthAccountLabel } from '../registry/oauth-account.js';
@@ -530,11 +530,11 @@ async function handleGetModels(
     const poolTarget = target ? POOL_TARGET_FOR_LAUNCH[target] : undefined;
     if (poolTarget) {
       const pool = parseFreePool(loadPreferences().freePool);
-      const entry = pool.enabled ? poolCatalogEntry(pool, pool.receipts, poolTarget) : undefined;
-      if (entry) (providers as any[]).push({ id: 'relay-free-pool', name: 'Relay Free Pool',
+      const entry = poolCatalogEntry(pool, pool.receipts, poolTarget);
+      if (entry) (providers as any[]).unshift({ id: 'relay-free-pool', name: 'Relay Free Pool',
         favoriteName: 'Relay Free Pool', hasKey: true, authType: 'none', modelCount: 1,
         models: [{ id: 'relay-free-pool', name: 'Relay Free Pool', contextWindow: entry.context_window,
-          freeStatus: 'verified_free', isFree: true, cost: { input: 0, output: 0 } }] });
+          freeStatus: 'verified_free', isFree: true, claudeTransparentCompatible: true, cost: { input: 0, output: 0 } }] });
     }
     sendJson(res, 200, { providers });
   } catch (err) {
@@ -1043,18 +1043,15 @@ async function handleTestModel(req: IncomingMessage, res: ServerResponse): Promi
   try {
     const { testModel } = await import('../test-model.js');
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
-    // Local log of the latest Test (skipped when the user cancelled it).
-    if (!controller.signal.aborted) {
-      try {
-        recordModelTestResult(body.providerId.trim(), body.modelId.trim(), result.ok
-          ? { ok: true, latencyMs: result.latencyMs, toolsPassed: result.toolsPassed }
-          : { ok: false, ...(result.error ? { error: result.error } : {}), ...('transient' in result && result.transient ? { transient: true } : {}) });
-      } catch { /* a logging failure must never fail the Test */ }
+    if (!result.ok) {
+      invalidateUiPoolMember(body.providerId.trim(), body.modelId.trim());
+      if (result.poolFailure && !controller.signal.aborted) {
+        await recordUiPoolTestFailure(body.providerId.trim(), body.modelId.trim(), result.poolFailure);
+      }
     }
-    if (!result.ok) invalidateUiPoolMember(body.providerId.trim(), body.modelId.trim());
     // A passing Test also confirms the context size, but only where the probe (which asks for a huge
     // output size) cannot cost money: custom endpoints and free models. Best effort; never fails the Test.
-    let context: unknown;
+    let context: { measured?: number; previous?: number; updated?: boolean; saved?: boolean; keptManual?: boolean; notChat?: boolean } | undefined;
     if (result.ok && !controller.signal.aborted) {
       try {
         const provider = loadRegistry().providers.find(p => p.id === body.providerId.trim());
@@ -1069,6 +1066,25 @@ async function handleTestModel(req: IncomingMessage, res: ServerResponse): Promi
           }
         }
       } catch { /* the context check is optional */ }
+    }
+    // Local log of the latest Test (skipped when the user cancelled it).
+    if (!controller.signal.aborted) {
+      try {
+        const measuredCtx = typeof context?.measured === 'number' && context.measured > 0 ? context.measured : undefined;
+        recordModelTestResult(body.providerId.trim(), body.modelId.trim(), result.ok
+          ? {
+              ok: true,
+              latencyMs: result.latencyMs,
+              toolsPassed: result.toolsPassed,
+              ...(context ? { contextConfirmed: measuredCtx !== undefined } : {}),
+              ...(measuredCtx ? { contextWindow: measuredCtx } : {}),
+            }
+          : {
+              ok: false,
+              ...(result.error ? { error: result.error } : {}),
+              ...('transient' in result && result.transient ? { transient: true } : {}),
+            });
+      } catch { /* a logging failure must never fail the Test */ }
     }
     const poolResult = result.ok
       ? await verifyUiPoolMember(body.providerId.trim(), body.modelId.trim(), controller.signal, { evidence: { text: 'passed', tools: result.toolsPassed ? 'passed' : 'failed' } })
@@ -1574,8 +1590,8 @@ function handleGetApps(res: ServerResponse): void {
 
 /** Maps a `relay-ai ui` app card id to the launch target `target-compatibility.ts` understands. */
 /** Launch targets that can start on the Relay Free Pool, and the pool target each one is served from. */
-const POOL_TARGET_FOR_LAUNCH: Partial<Record<RelayLaunchTarget, 'claude' | 'codex' | 'antigravity'>> = {
-  claude: 'claude', 'claude-app': 'claude', codex: 'codex', 'codex-app': 'codex', antigravity: 'antigravity',
+const POOL_TARGET_FOR_LAUNCH: Partial<Record<RelayLaunchTarget, 'claude' | 'codex' | 'antigravity' | 'core'>> = {
+  claude: 'claude', 'claude-app': 'claude', codex: 'codex', 'codex-app': 'codex', gemini: 'core', antigravity: 'antigravity',
 };
 
 const APP_ID_TO_LAUNCH_TARGET: Record<string, RelayLaunchTarget> = {
@@ -1595,12 +1611,17 @@ async function handleLaunchApp(req: IncomingMessage, res: ServerResponse, opts: 
     const { appId, favorites, cwd } = body;
     const httpProxy = body.httpProxy === true;
     const withNative = body.withNative === true;
-    const pool = body.pool === true;
+    let pool = body.pool === true;
     if (body.pool !== undefined && typeof body.pool !== 'boolean') { sendJson(res, 400, { error: 'pool must be a boolean' }); return; }
-    if (pool && (!POOL_LAUNCH_APPS.has(body.appId) || body.favorites || body.providerId || body.modelId || body.httpProxy || body.withNative)) {
-      sendJson(res, 400, { error: 'Choose the free pool alone; Gemini CLI cannot start on it.' }); return;
-    }
     let { providerId, modelId } = body as { providerId?: string; modelId?: string };
+    if (providerId === 'relay-free-pool' && modelId === 'relay-free-pool') {
+      pool = true;
+      providerId = undefined;
+      modelId = undefined;
+    }
+    if (pool && (!POOL_LAUNCH_APPS.has(body.appId) || body.favorites || providerId || modelId)) {
+      sendJson(res, 400, { error: 'Choose the free pool alone, without another model selection.' }); return;
+    }
     if (!appId) {
       sendJson(res, 400, { error: 'Missing appId' });
       return;

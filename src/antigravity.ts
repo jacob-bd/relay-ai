@@ -144,7 +144,7 @@ export function resolveAntigravityBootModel(
 
 async function resolveAntigravityLaunch(
   prefs: UserPreferences,
-  boot: { launchProvider?: string; launchModel?: string } | undefined,
+  boot: { launchProvider?: string; launchModel?: string; pool?: boolean } | undefined,
 ): Promise<AntigravityLaunchSelection | null> {
   // Load the provider catalog
   let catalog;
@@ -166,8 +166,8 @@ async function resolveAntigravityLaunch(
     return null;
   }
 
-  // The Relay Free Pool as the whole session (the UI launches it as provider = model = relay-free-pool).
-  if (boot?.launchProvider === 'relay-free-pool' && boot.launchModel === 'relay-free-pool') {
+  // The Relay Free Pool as the whole session (--pool or provider = model = relay-free-pool).
+  if (boot?.pool === true || (boot?.launchProvider === 'relay-free-pool' && boot.launchModel === 'relay-free-pool')) {
     return { startOnPool: true, allProviders };
   }
 
@@ -460,7 +460,7 @@ async function runAntigravityCommand(
   intro: string,
   tracePrefix: string,
   trace: boolean,
-  boot: { launchProvider?: string; launchModel?: string } | undefined,
+  boot: { launchProvider?: string; launchModel?: string; pool?: boolean } | undefined,
   launch: (env: NodeJS.ProcessEnv, routes: ReturnType<typeof buildAntigravityRoutes>, gatewayHandle: CloudCodeGatewayHandle) => Promise<number>,
   opts: {
     childArgs?: string[];
@@ -548,7 +548,7 @@ async function runAntigravityCommand(
 export async function runAgyCommand(
   childArgs: string[],
   trace = false,
-  boot?: { launchProvider?: string; launchModel?: string },
+  boot?: { launchProvider?: string; launchModel?: string; pool?: boolean },
 ): Promise<number> {
   return runAntigravityCommand(
     'relay-ai agy — Antigravity CLI', 'agy', trace, boot,
@@ -560,7 +560,7 @@ export async function runAgyCommand(
 export async function runAntigravityAppCommand(
   childArgs: string[],
   trace = false,
-  boot?: { launchProvider?: string; launchModel?: string },
+  boot?: { launchProvider?: string; launchModel?: string; pool?: boolean },
 ): Promise<number> {
   return runAntigravityCommand(
     'relay-ai antigravity — Antigravity app', 'antigravity', trace, boot,
@@ -631,7 +631,7 @@ function restoreExistingProfile(): void {
 export async function runAntigravityIdeCommand(
   childArgs: string[],
   trace = false,
-  boot?: { launchProvider?: string; launchModel?: string; useExistingProfile?: boolean; restore?: boolean },
+  boot?: { launchProvider?: string; launchModel?: string; pool?: boolean; useExistingProfile?: boolean; restore?: boolean },
 ): Promise<number> {
   let existingProfileDir: string | undefined;
   try {

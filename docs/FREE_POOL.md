@@ -33,7 +33,8 @@ offer the same model.
 | Remove | `relay-ai pool remove <provider-account> <model>` |
 | Priority up / down | `relay-ai pool move <provider-account> <model> up` / `down` |
 | Test | `relay-ai pool test <provider-account> <model>` |
-| Recheck saved members | `relay-ai pool verify` (add `--reasoning` to also recheck effort) |
+| Test pool / Retest all | `relay-ai pool verify` (add `--all` to retest Ready models, `--reasoning` to also recheck effort) |
+| Remove disabled / unavailable | `relay-ai pool clean [--disabled] [--unavailable] [--dry-run]` |
 | Advanced: measure context | `relay-ai pool context <provider-account> <model>` |
 | Advanced: set context | `relay-ai pool context <provider-account> <model> 128000` |
 | Advanced: reset context | `relay-ai pool context <provider-account> <model> reset` |
@@ -194,8 +195,10 @@ switch restores normal behavior immediately.
 
 ## What to expect during a failover
 
-- Relay tries at most **8 members per request**, within a **60 second** total budget. A member gets
-  **20 seconds** to produce its first content, and **20 seconds** between events after that.
+- Relay tries at most **8 members per request**, within a **90 second** total budget. A member gets
+  **15 seconds** to produce its first content, and **20 seconds** between events after that. On streaming
+  requests, Relay sends periodic keepalives (`event: ping` for Anthropic, `: keepalive` for OpenAI/Codex SSE,
+  and WebSocket ping frames for Codex WS) after a 1.5s grace window so the client stays connected during failover.
 - Failover happens only before output is committed, meaning before the first text, reasoning or tool-call
   event is passed to the client. Once that happens the request is committed and is never replayed.
 - If a member fails after output has started, the client receives an error for that turn. The failure is

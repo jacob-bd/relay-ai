@@ -38,6 +38,15 @@ describe('model reachability test', () => {
   mocks.stream.mockReturnValue(parts({ type: 'tool-call', toolName: 'relay_pool_probe', input: { value: 'ok' } }, { type: 'finish', finishReason: 'tool-calls' }));
   expect(await testModel('groq-2', 'test')).toMatchObject({ ok: true, toolsPassed: true });
   expect(mocks.stream).toHaveBeenCalledTimes(1);
+  expect(mocks.stream).toHaveBeenCalledWith(expect.objectContaining({ toolChoice: 'required' }));
+ });
+ it('falls back to auto tool choice if a server rejects tool_choice=required', async () => {
+  mocks.stream
+   .mockReturnValueOnce(parts({ type: 'error', error: { statusCode: 400, responseBody: 'tool_choice=required is not supported' } }))
+   .mockReturnValueOnce(parts({ type: 'tool-call', toolName: 'relay_pool_probe', input: { value: 'ok' } }, { type: 'finish', finishReason: 'tool-calls' }));
+  expect(await testModel('groq-2', 'test')).toMatchObject({ ok: true, toolsPassed: true });
+  expect(mocks.stream).toHaveBeenCalledTimes(2);
+  expect(mocks.stream.mock.calls[1]![0].toolChoice).toBeUndefined();
  });
  it('does not pass truncated output or malformed tool arguments', async () => {
   mocks.stream.mockReturnValue(parts({ type: 'text-delta', text: 'OK' }, { type: 'finish', finishReason: 'length' }));

@@ -107,12 +107,17 @@ function parseProvider(raw: unknown): RegistryProvider | null {
   if (p.modelTestResults && typeof p.modelTestResults === 'object' && !Array.isArray(p.modelTestResults)) {
     const results: NonNullable<RegistryProvider['modelTestResults']> = {};
     for (const [modelId, raw] of Object.entries(p.modelTestResults as Record<string, unknown>)) {
-      const r = raw as { ok?: unknown; at?: unknown; latencyMs?: unknown; toolsPassed?: unknown; error?: unknown; transient?: unknown } | null;
+      const r = raw as {
+        ok?: unknown; at?: unknown; latencyMs?: unknown; toolsPassed?: unknown;
+        contextConfirmed?: unknown; contextWindow?: unknown; error?: unknown; transient?: unknown;
+      } | null;
       if (!r || typeof r.ok !== 'boolean' || typeof r.at !== 'string' || !modelId) continue;
       results[modelId] = {
         ok: r.ok, at: r.at,
         ...(typeof r.latencyMs === 'number' ? { latencyMs: r.latencyMs } : {}),
         ...(typeof r.toolsPassed === 'boolean' ? { toolsPassed: r.toolsPassed } : {}),
+        ...(typeof r.contextConfirmed === 'boolean' ? { contextConfirmed: r.contextConfirmed } : {}),
+        ...(typeof r.contextWindow === 'number' && Number.isSafeInteger(r.contextWindow) && r.contextWindow > 0 ? { contextWindow: r.contextWindow } : {}),
         ...(typeof r.error === 'string' ? { error: r.error.slice(0, 300) } : {}),
         ...(r.transient === true ? { transient: true } : {}),
       };

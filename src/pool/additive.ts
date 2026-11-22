@@ -9,8 +9,9 @@ import { parseFreePool } from './membership.js';
 /** Saved opt-in, tolerant of a malformed receipt so a launch never fails. */
 export function additivePoolPreferences(
   prefs: Pick<UserPreferences, 'freePool'>,
+  options: { force?: boolean } = {},
 ): FreePoolPreferences | undefined {
-  if (prefs.freePool?.enabled !== true) return undefined;
+  if (!options.force && prefs.freePool?.enabled !== true) return undefined;
   try {
     const pool = parseFreePool(prefs.freePool);
     return pool.members.length > 0 && pool.receipts.length > 0 ? pool : undefined;

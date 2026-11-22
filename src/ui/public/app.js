@@ -27,6 +27,8 @@ const state = {
   poolPage: 1,
   poolBusy: false,
   poolActivityLastUpdated: null,
+  poolBatchTest: null,
+  poolBatchResults: new Map(),
 
   providers: [],
   usage: {},                  // providerId → saved plan usage (GET /api/usage; checked on demand only)
@@ -406,20 +408,228 @@ function fmtCtx(n) {
   return String(n);
 }
 
+function buildTestPopoverPayload(result, options = {}) {
+  const ctxWindow = result?.contextWindow ?? options.contextWindow ?? null;
+  const ctxSource = options.contextSource
+    ?? (result?.contextConfirmed ? 'measured' : options.contextWindowEstimated ? 'estimate' : undefined);
+  const ctxConfirmed = result?.contextConfirmed === true
+    || ctxSource === 'measured'
+    || ctxSource === 'set';
+  return {
+    tested: Boolean(result),
+    ok: result?.ok === true,
+    transient: result?.transient === true,
+    at: result?.at ?? null,
+    latencyMs: typeof result?.latencyMs === 'number' ? result.latencyMs : null,
+    toolsPassed: typeof result?.toolsPassed === 'boolean' ? result.toolsPassed : null,
+    requireTools: options.requireTools === true,
+    contextWindow: typeof ctxWindow === 'number' && ctxWindow > 0 ? ctxWindow : null,
+    contextConfirmed: ctxConfirmed,
+    contextSource: ctxSource ?? null,
+    contextEstimated: options.contextWindowEstimated === true && !ctxConfirmed,
+    error: result?.error ?? options.fallbackReason ?? null,
+    poolStatus: options.poolStatus ?? null,
+  };
+}
+
+function renderTestResultPopoverHtml(data) {
+  let titleText = 'Not tested yet';
+  let titleClass = 'is-muted';
+  if (data.poolStatus === 'Disabled') {
+    titleText = '⛔ Disabled by provider';
+    titleClass = 'is-fail';
+  } else if (data.poolStatus === 'Unavailable') {
+    titleText = '⚠ Unavailable in catalog';
+    titleClass = 'is-warn';
+  } else if (data.tested) {
+    if (data.ok && data.requireTools && data.toolsPassed === false) {
+      titleText = '⚠ Tool calling not confirmed';
+      titleClass = 'is-warn';
+    } else if (data.ok) {
+      titleText = '✓ Model test passed';
+      titleClass = 'is-pass';
+    } else if (data.transient) {
+      titleText = '⏱ Temporary test failure';
+      titleClass = 'is-warn';
+    } else {
+      titleText = '✗ Model test failed';
+      titleClass = 'is-fail';
+    }
+  } else if (data.poolStatus === 'Ready') {
+    titleText = '✓ Ready for Free Pool';
+    titleClass = 'is-pass';
+  }
+
+  let timeText = '';
+  if (data.at) {
+    const dt = new Date(data.at);
+    if (!Number.isNaN(dt.getTime())) {
+      timeText = dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+        + ', ' + dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    }
+  }
+  if (typeof data.latencyMs === 'number') {
+    const sec = `${(data.latencyMs / 1000).toFixed(1)}s`;
+    timeText = timeText ? `${timeText} · ${sec}` : sec;
+  }
+
+  // Row 1: Model availability
+  let availText = 'Not tested';
+  let availClass = 'is-muted';
+  if (data.poolStatus === 'Unavailable') {
+    availText = '✗ Unavailable';
+    availClass = 'is-warn';
+  } else if (data.poolStatus === 'Disabled') {
+    availText = '✗ Disabled';
+    availClass = 'is-fail';
+  } else if (data.tested) {
+    availText = data.ok ? '✓ Available' : data.transient ? '⏱ Temporary error' : '✗ Failed';
+    availClass = data.ok ? 'is-ok' : data.transient ? 'is-warn' : 'is-fail';
+  } else if (data.poolStatus === 'Ready') {
+    availText = '✓ Verified';
+    availClass = 'is-ok';
+  }
+
+  // Row 2: Tool calling
+  let toolsText = 'Not tested';
+  let toolsClass = 'is-muted';
+  if (data.toolsPassed === true || (!data.tested && data.poolStatus === 'Ready')) {
+    toolsText = '✓ Confirmed';
+    toolsClass = 'is-ok';
+  } else if (data.toolsPassed === false) {
+    toolsText = data.requireTools ? '✗ Not confirmed (required)' : '✗ Not confirmed';
+    toolsClass = data.requireTools ? 'is-fail' : 'is-warn';
+  } else if (data.tested && !data.ok) {
+    toolsText = '— Could not test';
+    toolsClass = 'is-muted';
+  }
+
+  // Row 3: Context window / model size
+  let ctxText = 'Unknown (not confirmed)';
+  let ctxClass = 'is-muted';
+  if (data.contextWindow) {
+    const sizeLabel = fmtCtx(data.contextWindow);
+    if (data.contextConfirmed) {
+      const how = data.contextSource === 'set' ? 'set by you' : 'confirmed';
+      ctxText = `✓ ${sizeLabel} (${how})`;
+      ctxClass = 'is-ok';
+    } else if (data.contextEstimated) {
+      ctxText = `⚠ ${sizeLabel} (unconfirmed estimate)`;
+      ctxClass = 'is-warn';
+    } else {
+      ctxText = `${sizeLabel} (listed · not probed)`;
+      ctxClass = 'is-muted';
+    }
+  }
+
+  const showError = Boolean(data.error && (!data.tested || !data.ok || data.poolStatus === 'Disabled' || data.poolStatus === 'Unavailable' || (data.requireTools && data.toolsPassed === false)));
+  const errorIsWarn = data.transient || data.poolStatus === 'Unavailable' || (data.ok && data.toolsPassed === false);
+  const errorLabel = data.poolStatus === 'Disabled' ? 'Disabled reason'
+    : data.poolStatus === 'Unavailable' ? 'Status'
+    : (data.ok && data.toolsPassed === false) ? 'Pool eligibility'
+    : 'Last failure reason';
+
+  return `
+    <div class="trp-head">
+      <span class="trp-title ${titleClass}">${escapeHtml(titleText)}</span>
+      ${timeText ? `<span class="trp-time">${escapeHtml(timeText)}</span>` : ''}
+    </div>
+    <div class="trp-rows">
+      <span class="trp-label">Model available</span>
+      <span class="trp-val ${availClass}">${escapeHtml(availText)}</span>
+      <span class="trp-label">Tool calls</span>
+      <span class="trp-val ${toolsClass}">${escapeHtml(toolsText)}</span>
+      <span class="trp-label">Context size</span>
+      <span class="trp-val ${ctxClass}">${escapeHtml(ctxText)}</span>
+    </div>
+    ${showError ? `<div class="trp-error${errorIsWarn ? ' is-warn' : ''}"><span class="trp-error-label">${escapeHtml(errorLabel)}</span>${escapeHtml(data.error)}</div>` : ''}
+  `;
+}
+
+function initTestResultPopover() {
+  if (document.getElementById('test-result-popover')) return;
+  const pop = document.createElement('div');
+  pop.id = 'test-result-popover';
+  pop.className = 'test-result-popover';
+  pop.setAttribute('role', 'tooltip');
+  pop.hidden = true;
+  document.body.appendChild(pop);
+
+  let activeTarget = null;
+  const hide = () => {
+    activeTarget = null;
+    pop.classList.remove('is-open');
+    pop.hidden = true;
+  };
+  const showFor = target => {
+    const raw = target?.getAttribute('data-test-popover');
+    if (!raw) return;
+    let data;
+    try { data = JSON.parse(raw); } catch { return; }
+    activeTarget = target;
+    pop.innerHTML = renderTestResultPopoverHtml(data);
+    pop.hidden = false;
+    // Measure after making visible (opacity 0) to clamp inside viewport cleanly.
+    const rect = target.getBoundingClientRect();
+    const popRect = pop.getBoundingClientRect();
+    const gap = 8;
+    const pad = 12;
+    let top = rect.bottom + gap;
+    if (top + popRect.height > window.innerHeight - pad && rect.top - gap - popRect.height >= pad) {
+      top = rect.top - gap - popRect.height;
+    }
+    let left = rect.right - popRect.width;
+    if (left < pad) left = Math.min(rect.left, window.innerWidth - popRect.width - pad);
+    left = Math.max(pad, Math.min(left, window.innerWidth - popRect.width - pad));
+    pop.style.top = `${Math.round(top)}px`;
+    pop.style.left = `${Math.round(left)}px`;
+    pop.classList.add('is-open');
+  };
+
+  document.addEventListener('mouseover', event => {
+    const target = event.target?.closest?.('[data-test-popover]');
+    if (target && target !== activeTarget) showFor(target);
+  });
+  document.addEventListener('mouseout', event => {
+    if (!activeTarget) return;
+    const leaving = event.target?.closest?.('[data-test-popover]');
+    if (!leaving || leaving !== activeTarget) return;
+    const entering = event.relatedTarget?.closest?.('[data-test-popover]');
+    if (entering === activeTarget) return;
+    hide();
+  });
+  document.addEventListener('focusin', event => {
+    const target = event.target?.closest?.('[data-test-popover]');
+    if (target) showFor(target);
+  });
+  document.addEventListener('focusout', event => {
+    const target = event.target?.closest?.('[data-test-popover]');
+    if (target && target === activeTarget) hide();
+  });
+  window.addEventListener('scroll', hide, true);
+  window.addEventListener('resize', hide);
+}
+
 // Latest Test outcome (stored locally in the registry): a small badge next to the Test button.
-function testBadgeHtml(result) {
-  if (!result) return '<span class="model-test-badge is-untested" title="Not tested yet">Untested</span>';
+function testBadgeHtml(result, options = {}) {
+  const payload = buildTestPopoverPayload(result, options);
+  const popAttr = ` tabindex="0" data-test-popover="${escapeHtml(JSON.stringify(payload))}"`;
+  if (!result) return `<span class="model-test-badge is-untested"${popAttr}>Untested</span>`;
   const when = new Date(result.at);
   const day = Number.isNaN(when.getTime()) ? '' : when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  const stamp = Number.isNaN(when.getTime()) ? '' : when.toLocaleString();
   if (result.ok) {
-    const tools = result.toolsPassed === false ? ' · tool calling not confirmed' : '';
-    return `<span class="model-test-badge is-pass" title="Passed ${escapeHtml(stamp)}${tools}">✓ Passed${day ? ' · ' + escapeHtml(day) : ''}</span>`;
+    if (result.toolsPassed === false) {
+      if (options.requireTools) {
+        return `<span class="model-test-badge is-retry"${popAttr}>⚠ No tools${day ? ' · ' + escapeHtml(day) : ''}</span>`;
+      }
+      return `<span class="model-test-badge is-pass"${popAttr}>✓ Chat only${day ? ' · ' + escapeHtml(day) : ''}</span>`;
+    }
+    return `<span class="model-test-badge is-pass"${popAttr}>✓ Passed${day ? ' · ' + escapeHtml(day) : ''}</span>`;
   }
   if (result.transient) {
-    return `<span class="model-test-badge is-retry" title="${escapeHtml((result.error || 'Temporary problem') + ' This does not mean the model is broken; run Test again.')}">⏱ Try again${day ? ' · ' + escapeHtml(day) : ''}</span>`;
+    return `<span class="model-test-badge is-retry"${popAttr}>⏱ Try again${day ? ' · ' + escapeHtml(day) : ''}</span>`;
   }
-  return `<span class="model-test-badge is-fail" title="${escapeHtml((result.error || 'Test failed') + (stamp ? ' (' + stamp + ')' : ''))}">✗ Failed${day ? ' · ' + escapeHtml(day) : ''}</span>`;
+  return `<span class="model-test-badge is-fail"${popAttr}>✗ Failed${day ? ' · ' + escapeHtml(day) : ''}</span>`;
 }
 
 function freeBadgeLabel(model) {
@@ -850,7 +1060,7 @@ function renderProviderModelBrowser() {
                 <td class="td-actions"><div class="model-actions">
                   <div class="test-stack">
                     <button class="btn btn-ghost btn-model-test" type="button" data-model-id="${escapeHtml(model.id)}" title="One small request, up to 1024 output tokens. Checks response and tool calling. No retries.">Test</button>
-                    <span class="test-badge-slot" data-model-id="${escapeHtml(model.id)}">${testBadgeHtml(model.testResult)}</span>
+                    <span class="test-badge-slot" data-model-id="${escapeHtml(model.id)}" data-context-window="${model.contextWindow ?? ''}" data-context-source="${escapeHtml(model.contextWindowSource ?? '')}" data-context-estimated="${model.contextWindowEstimated === true ? 'true' : ''}">${testBadgeHtml(model.testResult, { contextWindow: model.contextWindow, contextSource: model.contextWindowSource, contextWindowEstimated: model.contextWindowEstimated === true })}</span>
                   </div>
                   <button class="btn-model-hide${model.hidden ? ' is-hidden' : ''}" type="button" data-model-id="${escapeHtml(model.id)}" aria-pressed="${model.hidden ? 'true' : 'false'}" title="${model.hidden ? 'Unhide' : 'Hide'}" aria-label="${model.hidden ? 'Unhide' : 'Hide'} ${escapeHtml(model.name || model.id)}">${model.hidden ? EYE_OFF_ICON : EYE_ICON}</button>
                   ${showActions ? `
@@ -1353,22 +1563,45 @@ async function testModelResponse(button, providerId, modelId, options = {}) {
       body: JSON.stringify({ providerId, modelId }),
     });
     const result = await response.json();
-    const testResult = { ok: Boolean(result.ok), at: new Date().toISOString(), ...(result.ok ? { latencyMs: result.latencyMs, toolsPassed: result.toolsPassed } : { error: result.error, ...(result.transient ? { transient: true } : {}) }) };
+    const measuredCtx = typeof result.context?.measured === 'number' && result.context.measured > 0 ? result.context.measured : undefined;
+    const testResult = {
+      ok: Boolean(result.ok),
+      at: new Date().toISOString(),
+      ...(result.ok ? {
+        latencyMs: result.latencyMs,
+        toolsPassed: result.toolsPassed,
+        ...(result.context ? { contextConfirmed: measuredCtx !== undefined } : {}),
+        ...(measuredCtx ? { contextWindow: measuredCtx } : {}),
+      } : {
+        error: result.error,
+        ...(result.transient ? { transient: true } : {}),
+      }),
+    };
     const testedModel = state.providers.find(item => item.id === providerId)?.models?.find(item => item.id === modelId);
     if (testedModel) testedModel.testResult = testResult;
-    document.querySelectorAll(`.test-badge-slot[data-model-id="${CSS.escape(modelId)}"]`).forEach(slot => { slot.innerHTML = testBadgeHtml(testResult); });
+    document.querySelectorAll(`.test-badge-slot[data-model-id="${CSS.escape(modelId)}"]`).forEach(slot => {
+      const slotCtx = Number(slot.dataset.contextWindow) || testedModel?.contextWindow;
+      slot.innerHTML = testBadgeHtml(testResult, {
+        requireTools: slot.dataset.requireTools === 'true',
+        contextWindow: measuredCtx ?? slotCtx,
+        contextSource: measuredCtx ? 'measured' : (slot.dataset.contextSource || undefined),
+        contextWindowEstimated: slot.dataset.contextEstimated === 'true',
+      });
+    });
     button.textContent = formatModelTestLabel(result);
     button.title = result.ok ? `Responded in ${(result.latencyMs / 1000).toFixed(1)}s` : result.error;
     if (result.ok) applyTestContextResult(providerId, modelId, result.context);
     applyTestKindResult(providerId, modelId, result.notChat ?? result.context?.notChat);
     const pool = result.pool;
-    const capabilityNote = result.ok ? (result.toolsPassed ? ' · tool calling passed' : ' · tool calling not confirmed') : '';
+    const capabilityNote = result.ok
+      ? (result.toolsPassed ? ' · tool calling passed' : ' · tool calling not confirmed (required for Relay Free Pool)')
+      : '';
     const poolNote = pool?.status === 'verified' ? ' · verified for the Relay Free Pool'
-      : pool?.reason ? ` · pool: ${pool.reason}` : '';
+      : pool?.reason && result.toolsPassed !== false ? ` · pool: ${pool.reason}` : '';
     const message = result.ok
       ? `${modelId} responded in ${(result.latencyMs / 1000).toFixed(1)}s${capabilityNote}${contextTestNote(result.context)}${poolNote}`
       : `${modelId}: ${result.error || 'Test failed'}`;
-    showToast(message, undefined, poolNote ? 5000 : 2200);
+    showToast(message, undefined, (poolNote || result.toolsPassed === false) ? 5000 : 2200);
     if (pool || options.pool || poolMember(providerId, modelId)) await loadFreePool();
   } catch {
     button.textContent = 'Retry test';
@@ -3261,11 +3494,31 @@ function poolAddCellHtml(candidate, manageable) {
   return `<button class="btn-model-add btn-model-pool pool-add" type="button" data-provider-id="${escapeHtml(candidate.providerId)}" data-model-id="${escapeHtml(candidate.modelId)}" title="Add to pool" aria-label="Add ${label} to the Relay Free Pool">+</button>`;
 }
 
+function poolMemberKey(member) {
+  return `${member.providerId}/${member.modelId}`;
+}
+
 function poolMemberRowHtml(member, index, manageable) {
-  const status = member.status === 'Ready' ? ['is-ready', 'Ready']
-    : member.status === 'Disabled' ? ['is-unavailable', 'Disabled']
-    : member.status === 'Unavailable' ? ['is-unavailable', 'Unavailable']
+  const key = poolMemberKey(member);
+  const batch = state.poolBatchTest;
+  const batchRunning = batch?.running === true;
+  const isTestingNow = batchRunning && batch.currentKey === key;
+  const batchRes = state.poolBatchResults.get(key);
+  let status = member.status === 'Ready' ? ['is-ready', 'Ready']
+    : member.status === 'Disabled' ? ['is-unavailable', 'Disabled · Remove']
+    : member.status === 'Unavailable' ? ['is-warn', 'Unavailable']
     : ['is-pending', 'Needs test'];
+  if (isTestingNow) {
+    status = ['is-testing', 'Testing…'];
+  } else if (batchRes?.status === 'verified' && typeof batchRes.latencyMs === 'number' && member.status === 'Ready') {
+    status = ['is-ready', `Ready · ${(batchRes.latencyMs / 1000).toFixed(1)}s`];
+  }
+  const extraPill = !isTestingNow && batchRes && (batchRes.status === 'rate-limited' || batchRes.status === 'transient')
+    ? `<span class="pool-status is-warn">${escapeHtml(batchRes.label)}</span>`
+    : '';
+  const rowStateClass = member.status === 'Disabled' ? ' is-disabled-row'
+    : member.status === 'Unavailable' ? ' is-unavailable-row'
+    : '';
   const facts = [];
   const sourceNote = { set: 'set by you', measured: 'measured', estimate: 'estimate' }[member.contextSource];
   if (member.contextWindow) {
@@ -3276,36 +3529,48 @@ function poolMemberRowHtml(member, index, manageable) {
   } else {
     facts.push('context unknown');
   }
-  const reason = member.reason ? `<div class="pool-member-reason">${escapeHtml(member.reason)}</div>` : '';
+  const reasonText = member.reason || (!isTestingNow && batchRes && !batchRes.ok ? batchRes.reason : '');
+  const reason = reasonText ? `<div class="pool-member-reason">${escapeHtml(reasonText)}</div>` : '';
+  const removeBtnClass = (member.status === 'Disabled' || member.status === 'Unavailable')
+    ? 'btn btn-ghost btn-danger-ghost pool-remove'
+    : 'btn btn-ghost pool-remove';
   const actions = manageable ? `
     <div class="pool-member-actions">
-      <button class="btn btn-ghost pool-test" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" title="One small request, up to 1024 output tokens. No retries or context/reasoning probes.">Test</button>
-      <button class="btn btn-ghost pool-move" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-direction="-1" ${index === 0 ? 'disabled' : ''} title="Move earlier in routing priority" aria-label="Move ${escapeHtml(member.name)} up">↑</button>
-      <button class="btn btn-ghost pool-move" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-direction="1" ${index === poolData().members.length - 1 ? 'disabled' : ''} title="Move later in routing priority" aria-label="Move ${escapeHtml(member.name)} down">↓</button>
+      <button class="btn btn-ghost pool-test" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" ${batchRunning || member.status === 'Unavailable' ? 'disabled' : ''} title="One small request, up to 1024 output tokens. No retries or context/reasoning probes.">Test</button>
+      <button class="btn btn-ghost pool-move" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-direction="-1" ${batchRunning || index === 0 ? 'disabled' : ''} title="Move earlier in routing priority" aria-label="Move ${escapeHtml(member.name)} up">↑</button>
+      <button class="btn btn-ghost pool-move" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-direction="1" ${batchRunning || index === poolData().members.length - 1 ? 'disabled' : ''} title="Move later in routing priority" aria-label="Move ${escapeHtml(member.name)} down">↓</button>
       <details class="pool-advanced-menu">
         <summary class="btn btn-ghost" draggable="false">Advanced…</summary>
         <div class="pool-advanced-options">
-          <button class="btn btn-ghost pool-context" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}">Measure context · 1 request</button>
-          <button class="btn btn-ghost pool-set-context" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-current="${member.contextWindow ?? ''}">Set context${member.contextWindow ? ` (now ${fmtCtx(member.contextWindow)})` : ''} · no requests</button>
-          ${member.reasoningTestRequests > 1 ? '<button class="btn btn-ghost pool-reasoning" type="button" draggable="false" data-provider-id="' + escapeHtml(member.providerId) + '" data-model-id="' + escapeHtml(member.modelId) + '" data-requests="' + member.reasoningTestRequests + '">Check reasoning · up to ' + member.reasoningTestRequests + ' requests</button>' : ''}
+          <button class="btn btn-ghost pool-context" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" ${batchRunning ? 'disabled' : ''}>Measure context · 1 request</button>
+          <button class="btn btn-ghost pool-set-context" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-current="${member.contextWindow ?? ''}" ${batchRunning ? 'disabled' : ''}>Set context${member.contextWindow ? ` (now ${fmtCtx(member.contextWindow)})` : ''} · no requests</button>
+          ${member.reasoningTestRequests > 1 ? '<button class="btn btn-ghost pool-reasoning" type="button" draggable="false" data-provider-id="' + escapeHtml(member.providerId) + '" data-model-id="' + escapeHtml(member.modelId) + '" data-requests="' + member.reasoningTestRequests + '"' + (batchRunning ? ' disabled' : '') + '>Check reasoning · up to ' + member.reasoningTestRequests + ' requests</button>' : ''}
         </div>
       </details>
-      <button class="btn btn-ghost pool-remove" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" title="Remove from the Relay Free Pool">Remove</button>
+      <button class="${removeBtnClass}" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" ${batchRunning ? 'disabled' : ''} title="Remove from the Relay Free Pool">Remove</button>
     </div>` : '';
   const handle = manageable
     ? `<span class="drag-handle" aria-hidden="true" title="Drag to change routing priority"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="8" y="4" width="3" height="3" rx="1"/><rect x="13" y="4" width="3" height="3" rx="1"/><rect x="8" y="10" width="3" height="3" rx="1"/><rect x="13" y="10" width="3" height="3" rx="1"/><rect x="8" y="16" width="3" height="3" rx="1"/><rect x="13" y="16" width="3" height="3" rx="1"/></svg></span>`
     : '';
-  const dragAttrs = manageable
+  const dragAttrs = manageable && !batchRunning
     ? ` draggable="true" tabindex="0" data-index="${index}" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" aria-grabbed="false" aria-label="${escapeHtml(member.name)}, priority ${index + 1}. Drag or Alt+Arrow to reorder."`
-    : '';
-  return `<li class="pool-member-row"${dragAttrs}>
+    : ` tabindex="0" data-index="${index}" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}"`;
+  const memberPopover = buildTestPopoverPayload(member.testResult, {
+    requireTools: true,
+    contextWindow: member.routingContextWindow ?? member.contextWindow,
+    contextSource: member.contextSource,
+    contextWindowEstimated: member.contextWindowEstimated === true,
+    fallbackReason: reasonText || undefined,
+    poolStatus: member.status,
+  });
+  return `<li class="pool-member-row${rowStateClass}"${dragAttrs}>
     ${handle}
     <span class="pool-rank" aria-hidden="true">${index + 1}</span>
     <div class="pool-member-main">
       <div class="pool-member-title">
         <strong>${escapeHtml(member.name)}</strong>${intelBadgeInline(member)}
         <span class="provider-pill" style="${providerPillStyle(member.providerId)}">${escapeHtml(member.providerName)}</span>
-        <span class="pool-status ${status[0]}">${status[1]}</span>
+        <span class="pool-status has-test-popover ${status[0]}" tabindex="0" data-test-popover="${escapeHtml(JSON.stringify(memberPopover))}">${status[1]}</span>${extraPill}
       </div>
       <div class="pool-member-meta">${escapeHtml(member.modelId)}${facts.length ? ' · ' + escapeHtml(facts.join(' · ')) : ''}</div>
       ${reason}
@@ -3329,7 +3594,7 @@ function poolCandidateRowHtml(candidate, manageable) {
     <td>${fmtCtx(candidate.contextWindow) || '—'}${estimate}</td>
     ${intelCellHtml(candidate)}
     <td>${formatModelPrice(candidate.cost, true, 'FREE')}</td>
-    <td class="td-actions"><span class="test-badge-slot" data-model-id="${escapeHtml(candidate.modelId)}">${testBadgeHtml(candidate.testResult)}</span>${test}${eye}${poolAddCellHtml(candidate, manageable)}</td>
+    <td class="td-actions"><span class="test-badge-slot" data-model-id="${escapeHtml(candidate.modelId)}" data-require-tools="true" data-context-window="${candidate.contextWindow ?? ''}" data-context-source="${escapeHtml(candidate.contextSource ?? '')}" data-context-estimated="${candidate.contextWindowEstimated === true ? 'true' : ''}">${testBadgeHtml(candidate.testResult, { requireTools: true, contextWindow: candidate.contextWindow, contextSource: candidate.contextSource, contextWindowEstimated: candidate.contextWindowEstimated === true, fallbackReason: candidate.addReason })}</span>${test}${eye}${poolAddCellHtml(candidate, manageable)}</td>
   </tr>`;
 }
 
@@ -3389,9 +3654,45 @@ function renderFreePool() {
   const notice = state.pool?.error
     ? `<div class="pool-notice">Could not refresh the list. ${escapeHtml(state.pool.error)} <button class="btn btn-ghost" type="button" id="free-pool-retry">Retry</button></div>`
     : '';
-  const disabledBanner = (pool.disabled ?? []).length
-    ? `<div class="pool-notice pool-disabled-banner"><strong>⛔ ${pool.disabled.length} pool member${pool.disabled.length === 1 ? ' is' : 's are'} disabled.</strong> ${pool.disabled.map(item => `<code>${escapeHtml(item.providerId)}/${escapeHtml(item.modelId)}</code>`).join(', ')} Use Test on ${pool.disabled.length === 1 ? 'it' : 'each'} to re-enable.</div>`
+  const batch = state.poolBatchTest;
+  const batchRunning = batch?.running === true;
+  const disabledItems = pool.disabled ?? [];
+  const unavailableItems = pool.unavailable ?? [];
+  const disabledBanner = disabledItems.length
+    ? `<div class="pool-notice pool-disabled-banner pool-banner">
+        <div class="pool-banner-body">
+          <strong>⛔ ${disabledItems.length} pool member${disabledItems.length === 1 ? ' is' : 's are'} no longer valid (disabled by provider).</strong>
+          ${disabledItems.map(item => `<code>${escapeHtml(item.providerId)}/${escapeHtml(item.modelId)}</code>`).join(', ')}
+          — excluded from routing until removed or re-tested.
+        </div>
+        <button class="btn btn-ghost btn-danger-ghost" id="pool-remove-disabled" type="button" ${batchRunning ? 'disabled' : ''}>Remove disabled (${disabledItems.length})…</button>
+      </div>`
     : '';
+  const unavailableBanner = unavailableItems.length
+    ? `<div class="pool-notice pool-unavailable-banner pool-banner">
+        <div class="pool-banner-body">
+          <strong>⚠ ${unavailableItems.length} pool member${unavailableItems.length === 1 ? ' is' : 's are'} unavailable in your catalog</strong> (removed by provider, hidden, or provider offline):
+          ${unavailableItems.map(item => `<code>${escapeHtml(item.providerId)}/${escapeHtml(item.modelId)}</code>`).join(', ')}.
+        </div>
+        <button class="btn btn-ghost btn-danger-ghost" id="pool-remove-unavailable" type="button" ${batchRunning ? 'disabled' : ''}>Remove unavailable (${unavailableItems.length})…</button>
+      </div>`
+    : '';
+  const pendingTestableCount = members.filter(m => m.status === 'Needs test' || m.status === 'Disabled').length;
+  const allTestableCount = members.filter(m => m.status !== 'Unavailable').length;
+  const batchProgressHtml = batchRunning
+    ? `<div class="pool-batch-progress" role="status" aria-live="polite">
+        <div class="pool-batch-progress-text">
+          <span><strong>Testing pool (${Math.min(batch.completed + 1, batch.total)} of ${batch.total}):</strong> <code>${escapeHtml(batch.currentLabel || '')}</code></span>
+          <div class="pool-batch-bar"><div class="pool-batch-bar-fill" style="width:${batch.total ? Math.round((batch.completed / batch.total) * 100) : 0}%"></div></div>
+        </div>
+        <button class="btn btn-ghost" id="pool-test-stop" type="button">Stop</button>
+      </div>`
+    : '';
+  const poolHeaderActions = manageable && members.length > 0 ? `
+    <div class="pool-section-actions">
+      <button class="btn btn-primary" id="pool-test-pending" type="button" ${batchRunning || pendingTestableCount === 0 ? 'disabled' : ''} title="Test untested and disabled pool members (1 lightweight request each)">Test pool${pendingTestableCount > 0 ? ` (${pendingTestableCount})` : ''}</button>
+      <button class="btn btn-ghost" id="pool-retest-all" type="button" ${batchRunning || allTestableCount === 0 ? 'disabled' : ''} title="Re-verify every catalog-present model in the pool (keeps Ready receipts on transient errors)">Retest all (${allTestableCount})</button>
+    </div>` : '';
   const readyCount = members.filter(member => member.status === 'Ready').length;
   const enabledStatus = !enabled
     ? 'Off. Relay Free Pool is not added to any launch or the gateway.'
@@ -3434,9 +3735,12 @@ function renderFreePool() {
   panel.innerHTML = `
     ${notice}
     ${disabledBanner}
-    <div class="pool-section-head">
+    ${unavailableBanner}
+    <div class="pool-section-head pool-section-head-row">
       <h2 class="pool-heading">In the pool <span class="pool-count">${members.length}</span></h2>
+      ${poolHeaderActions}
     </div>
+    ${batchProgressHtml}
     ${memberHtml}
     ${controls}
     <div class="pool-section-head">
@@ -3482,6 +3786,21 @@ function renderFreePool() {
   const rerender = () => renderFreePool();
   bindIntelSort(panel, () => { state.poolPage = 1; rerender(); });
   document.getElementById('free-pool-retry')?.addEventListener('click', () => { void loadFreePool(); });
+  document.getElementById('pool-test-pending')?.addEventListener('click', () => { void runPoolBatchTest('pending'); });
+  document.getElementById('pool-retest-all')?.addEventListener('click', () => { void runPoolBatchTest('all'); });
+  document.getElementById('pool-test-stop')?.addEventListener('click', () => {
+    if (state.poolBatchTest?.running) {
+      state.poolBatchTest.stopped = true;
+      state.poolBatchTest.controller.abort();
+      renderFreePool();
+    }
+  });
+  document.getElementById('pool-remove-disabled')?.addEventListener('click', () => {
+    void removePoolMembersBatch(disabledItems, 'disabled');
+  });
+  document.getElementById('pool-remove-unavailable')?.addEventListener('click', () => {
+    void removePoolMembersBatch(unavailableItems, 'unavailable');
+  });
   document.getElementById('free-pool-search')?.addEventListener('input', event => {
     state.poolSearch = event.target.value;
     state.poolPage = 1;
@@ -3580,6 +3899,169 @@ function renderPoolMemberList() {
   const manageable = true;
   list.innerHTML = members.map((member, index) => poolMemberRowHtml(member, index, manageable)).join('');
   bindPoolMemberRows(list);
+}
+
+async function runPoolBatchTest(mode) {
+  if (state.poolBatchTest?.running) return;
+  const pool = poolData();
+  const members = pool?.members ?? [];
+  const unavailableCount = members.filter(m => m.status === 'Unavailable').length;
+  const targets = members.filter(m => {
+    if (m.status === 'Unavailable') return false;
+    return mode === 'all' ? true : (m.status === 'Needs test' || m.status === 'Disabled');
+  });
+  if (targets.length === 0) {
+    showToast(mode === 'pending'
+      ? 'All available pool models are already Ready. Use "Retest all" to re-check them.'
+      : 'No testable models in the pool.', undefined, 4000);
+    return;
+  }
+
+  const controller = new AbortController();
+  state.poolBatchTest = {
+    running: true,
+    mode,
+    total: targets.length,
+    completed: 0,
+    currentKey: '',
+    currentLabel: '',
+    controller,
+    stopped: false,
+  };
+  for (const target of targets) state.poolBatchResults.delete(poolMemberKey(target));
+
+  const rateLimitedProviders = new Set();
+  let readyCount = 0;
+  let transientCount = 0;
+  let disabledCount = 0;
+  let failedCount = 0;
+
+  try {
+    for (const member of targets) {
+      if (state.poolBatchTest.stopped || controller.signal.aborted) break;
+      const key = poolMemberKey(member);
+      state.poolBatchTest.currentKey = key;
+      state.poolBatchTest.currentLabel = `${member.providerName || member.providerId} / ${member.modelId}`;
+      renderFreePool();
+
+      if (rateLimitedProviders.has(member.providerId)) {
+        transientCount += 1;
+        state.poolBatchResults.set(key, {
+          ok: false,
+          status: 'rate-limited',
+          label: 'Rate limited · skipped',
+          reason: 'Skipped because this provider hit a rate limit earlier in this batch.',
+        });
+        state.poolBatchTest.completed += 1;
+        renderFreePool();
+        continue;
+      }
+
+      let result;
+      try {
+        const res = await fetch('/api/pool', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            action: 'check',
+            providerId: member.providerId,
+            modelId: member.modelId,
+            preserveReceiptOnTransient: member.status === 'Ready',
+          }),
+        });
+        result = await res.json();
+      } catch (err) {
+        if (controller.signal.aborted || err?.name === 'AbortError') break;
+        result = { ok: false, status: 'transient', transient: true, reason: 'Request failed' };
+      }
+
+      if (result.ok) {
+        readyCount += 1;
+        member.status = 'Ready';
+        member.reason = undefined;
+        state.poolBatchResults.set(key, {
+          ok: true,
+          status: 'verified',
+          latencyMs: result.latencyMs,
+        });
+      } else if (result.permanent || result.status === 'disabled') {
+        disabledCount += 1;
+        member.status = 'Disabled';
+        member.reason = result.reason;
+        state.poolBatchResults.set(key, {
+          ok: false,
+          status: 'disabled',
+          reason: result.reason,
+        });
+      } else if (result.rateLimited || result.status === 'rate-limited') {
+        transientCount += 1;
+        rateLimitedProviders.add(member.providerId);
+        state.poolBatchResults.set(key, {
+          ok: false,
+          status: 'rate-limited',
+          label: 'Rate limited',
+          reason: result.reason,
+        });
+      } else if (result.transient || result.status === 'transient') {
+        transientCount += 1;
+        state.poolBatchResults.set(key, {
+          ok: false,
+          status: 'transient',
+          label: 'Temporary error',
+          reason: result.reason,
+        });
+      } else {
+        failedCount += 1;
+        if (member.status !== 'Unavailable') member.status = 'Needs test';
+        member.reason = result.reason;
+        state.poolBatchResults.set(key, {
+          ok: false,
+          status: 'failed',
+          reason: result.reason,
+        });
+      }
+
+      state.poolBatchTest.completed += 1;
+      renderFreePool();
+    }
+  } finally {
+    const wasStopped = state.poolBatchTest?.stopped === true;
+    state.poolBatchTest = null;
+    await loadFreePool();
+    const parts = [];
+    if (readyCount > 0) parts.push(`${readyCount} ready`);
+    if (transientCount > 0) parts.push(`${transientCount} temporary/rate-limited`);
+    if (disabledCount > 0) parts.push(`${disabledCount} disabled`);
+    if (failedCount > 0) parts.push(`${failedCount} failed`);
+    if (unavailableCount > 0) parts.push(`${unavailableCount} unavailable`);
+    const prefix = wasStopped ? 'Pool test stopped: ' : 'Pool test complete: ';
+    showToast(prefix + (parts.join(' · ') || 'no changes'), undefined, 6000);
+  }
+}
+
+async function removePoolMembersBatch(items, label) {
+  if (!items || items.length === 0 || state.poolBusy || state.poolBatchTest?.running) return;
+  const listText = items.map(item => `• ${item.providerId}/${item.modelId}`).join('\n');
+  if (!window.confirm(`Remove ${items.length} ${label} model${items.length === 1 ? '' : 's'} from the Relay Free Pool?\n\n${listText}`)) {
+    return;
+  }
+  state.poolBusy = true;
+  try {
+    const res = await api('POST', '/api/pool', {
+      action: 'remove-batch',
+      members: items.map(item => ({ providerId: item.providerId, modelId: item.modelId })),
+    });
+    if (res?.error || res?.ok === false) {
+      showToast(res?.error || 'Could not remove pool members', undefined, 5000);
+      return;
+    }
+    for (const item of items) state.poolBatchResults.delete(poolMemberKey(item));
+    showToast(`Removed ${res.removed ?? items.length} ${label} model${(res.removed ?? items.length) === 1 ? '' : 's'} from the pool`, undefined, 3500);
+    await loadFreePool();
+  } finally {
+    state.poolBusy = false;
+  }
 }
 
 function bindPoolMemberRows(list) {
@@ -4286,11 +4768,23 @@ function appModelInputValue(appId) {
   return getAppSelection(appId).label;
 }
 
+function appHasFreePool(appId) {
+  const targetModels = state.appModelsByTarget[appId];
+  if (Array.isArray(targetModels)) {
+    return targetModels.some(m => m.providerId === 'relay-free-pool' && m.id === 'relay-free-pool');
+  }
+  return Boolean(state.pool?.data?.members?.some(m => m.status === 'Ready'));
+}
+
 function claudeHttpProxyAvailable(appId) {
   if (appId !== 'claude') return false;
   const selection = getAppSelection(appId);
   if (selection.mode !== 'model') return true;
-  const model = state.allModels.find(
+  if (selection.providerId === 'relay-free-pool' && selection.modelId === 'relay-free-pool') return true;
+  const pool = state.appModelsByTarget[appId] ?? state.allModels;
+  const model = pool.find(
+    candidate => candidate.providerId === selection.providerId && candidate.id === selection.modelId,
+  ) ?? state.allModels.find(
     candidate => candidate.providerId === selection.providerId && candidate.id === selection.modelId,
   );
   return Boolean(model?.claudeTransparentCompatible);
@@ -4304,6 +4798,7 @@ function matchedAppModels(appId) {
     const providerName = getProviderName(m.providerId);
     if (state.appFreeOnly && !isFreeModel(m)) return false;
     if (!q) return true;
+    if (m.providerId === 'relay-free-pool' && matchesModelSearch('relay free model pool', q)) return true;
     return matchesModelSearch(m.id, q)
       || (m.name && matchesModelSearch(m.name, q))
       || matchesModelSearch(providerName, q)
@@ -4328,7 +4823,11 @@ function buildAppModelResults(appId) {
   }
 
   return Array.from(groups.entries())
-    .sort((a, b) => a[1].name.localeCompare(b[1].name))
+    .sort((a, b) => {
+      if (a[0] === 'relay-free-pool') return -1;
+      if (b[0] === 'relay-free-pool') return 1;
+      return a[1].name.localeCompare(b[1].name);
+    })
     .map(([providerId, group]) => {
       const rows = group.models
         .slice()
@@ -4431,6 +4930,7 @@ function renderApps() {
                     <div class="launch-model-quick">
                       <button type="button" onclick="selectLaunchDefault('${app.id}')">Choose at launch</button>
                       <button type="button" onclick="selectLaunchFavorites('${app.id}')">★ Favorites</button>
+                      ${appHasFreePool(app.id) ? `<button type="button" onclick="selectLaunchPool('${app.id}')">🏊 Relay Free Pool</button>` : ''}
                     </div>
                     ${modelResults}
                   </div>
@@ -4538,6 +5038,8 @@ async function launchApp(appId) {
 
   if (selection.mode === 'favorites') {
     body.favorites = true;
+  } else if (selection.mode === 'pool') {
+    body.pool = true;
   } else if (selection.mode === 'model') {
     body.providerId = selection.providerId;
     body.modelId = selection.modelId;
@@ -4610,6 +5112,7 @@ function updateLaunchModelMenu(appId, clearInput) {
     <div class="launch-model-quick">
       <button type="button" onclick="selectLaunchDefault('${appId}')">Choose at launch</button>
       <button type="button" onclick="selectLaunchFavorites('${appId}')">★ Favorites</button>
+      ${appHasFreePool(appId) ? `<button type="button" onclick="selectLaunchPool('${appId}')">🏊 Relay Free Pool</button>` : ''}
     </div>
     ${modelResults}
   `;
@@ -4652,10 +5155,23 @@ function selectLaunchFavorites(appId) {
   renderApps();
 }
 
+function selectLaunchPool(appId) {
+  state.appSelections[appId] = { mode: 'pool', label: '🏊 Relay Free Pool' };
+  state.appModelOpen = null;
+  state.appModelFilters[appId] = '';
+  renderApps();
+}
+
 function selectLaunchModel(appId, encodedProviderId, encodedModelId) {
   const providerId = decodeURIComponent(encodedProviderId);
   const modelId = decodeURIComponent(encodedModelId);
-  const model = state.allModels.find(m => m.providerId === providerId && m.id === modelId);
+  if (providerId === 'relay-free-pool' && modelId === 'relay-free-pool') {
+    selectLaunchPool(appId);
+    return;
+  }
+  const pool = state.appModelsByTarget[appId] ?? state.allModels;
+  const model = pool.find(m => m.providerId === providerId && m.id === modelId)
+    ?? state.allModels.find(m => m.providerId === providerId && m.id === modelId);
   const favorite = isGeneralFavorite(providerId, modelId);
   const label = `${favorite ? '★ ' : ''}${model?.name || modelId}`;
   state.appSelections[appId] = { mode: 'model', providerId, modelId, label };
@@ -4729,6 +5245,7 @@ window.openLaunchModelPicker = openLaunchModelPicker;
 window.filterLaunchModels = filterLaunchModels;
 window.selectLaunchDefault = selectLaunchDefault;
 window.selectLaunchFavorites = selectLaunchFavorites;
+window.selectLaunchPool = selectLaunchPool;
 window.selectLaunchModel = selectLaunchModel;
 window.setLaunchFolder = setLaunchFolder;
 window.setClaudeHttpProxy = setClaudeHttpProxy;
@@ -5413,5 +5930,6 @@ async function loadIntelligencePanel() {
   });
 }
 
+initTestResultPopover();
 window.addEventListener('hashchange', () => { if (window.location.hash === '#intelligence') void loadIntelligencePanel(); });
 if (window.location.hash === '#intelligence') void loadIntelligencePanel();

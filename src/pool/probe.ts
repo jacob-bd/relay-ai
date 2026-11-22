@@ -1,4 +1,5 @@
 import { streamText, tool, jsonSchema, type LanguageModel } from 'ai';
+import { poolFailure, type PoolFailure } from './errors.js';
 
 /** Test and pool-verify output budget. Reasoning models spend part of it before answering; 256 failed them. */
 export const TEST_MAX_OUTPUT_TOKENS = 1024;
@@ -7,6 +8,8 @@ export interface PoolProbeResult {
   text: 'passed' | 'failed';
   tools: 'passed' | 'failed';
   failure?: 'timeout' | 'truncated' | 'invalid-output' | 'provider';
+  /** Sanitized classification of the provider error (never raw upstream text or headers). */
+  poolFailure?: PoolFailure;
 }
 /** Explicit enrollment probe only. One bounded call, no tool execution or retry loop. */
 export async function probePoolModel(
@@ -47,7 +50,13 @@ export async function probePoolModel(
   } catch (error) {
     if (signal.aborted) throw signal.reason;
     onError?.(error);
-    return { ...result, failure: (error as { name?: string })?.name === 'TimeoutError' ? 'timeout' : 'provider' };
+    const isTimeout = (error as { name?: string })?.name === 'TimeoutError';
+    const classified = isTimeout ? { kind: 'transient' as const } : poolFailure(error);
+    return {
+      ...result,
+      failure: isTimeout ? 'timeout' : 'provider',
+      poolFailure: classified,
+    };
   }
 }
 

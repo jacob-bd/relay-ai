@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { MessageStream } from '@anthropic-ai/sdk/lib/MessageStream';
 import { writeAnthropicStream } from '../sdk-adapter.js';
 import type { FreePoolPreferences } from '../types.js';
-import { MAX_POOL_ATTEMPTS, type PoolLimits } from './attempt.js';
+import type { PoolLimits } from './attempt.js';
+import { DEFAULT_POOL_LIMITS } from './codex-runtime.js';
 import { retryPoolFailure } from './errors.js';
 import { trackClaudePoolSignatures } from './claude-signatures.js';
 import { requestFingerprint } from './codex-retry.js';
@@ -279,10 +280,7 @@ export class ClaudePoolRuntime {
       sessionId?: string,
       onSkip?: (member: { providerId: string; modelId: string }, reason: string) => void,
     ) => Promise<DispatchRoute[]>,
-    private readonly limits: PoolLimits = {
-      attempts: MAX_POOL_ATTEMPTS, firstContentMs: 20_000, idleMs: 20_000,
-      totalMs: 60_000, bufferBytes: 65_536, cleanupMs: 1000,
-    },
+    private readonly limits: PoolLimits = DEFAULT_POOL_LIMITS,
   ) {}
 
   async serve(

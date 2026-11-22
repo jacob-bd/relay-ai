@@ -458,7 +458,8 @@ export async function runCodexCommand(
     }
   }
 
-  if (launch.pool) {
+  const explicitMixedPool = Boolean(launch.pool && launch.codexLaunchMode === 'mixed');
+  if (launch.pool && !explicitMixedPool) {
     const pool = parseFreePool(prefs.freePool);
     if (pool.members.length === 0) {
       console.error(pc.red('No free pool members. Add one with: relay-ai pool add <provider-account> <model>'));
@@ -550,7 +551,7 @@ export async function runCodexCommand(
     console.error(pc.red(`\nError: ${launchPlan.error}\n`));
     return 1;
   }
-  const allowNonTty = !!(launchPlan.skip && launchPlan.target);
+  const allowNonTty = !!(launchPlan.skip && launchPlan.target) || explicitMixedPool;
 
   if (!configOnly) {
     const sessionCheck = checkSessionLock(isTty || allowNonTty);
@@ -610,7 +611,7 @@ export async function runCodexCommand(
     return 0;
   }
 
-  const additivePool = additivePoolPreferences(prefs);
+  const additivePool = additivePoolPreferences(prefs, { force: explicitMixedPool });
   const additive = additivePool
     ? createAdditivePoolRuntime(additivePool, providersForPicker(catalog))
     : undefined;
@@ -638,11 +639,13 @@ export async function runCodexCommand(
   }
   // True when the Relay Free Pool is the model the session opens on, with the native models (mixed) or the
   // favorites around it. activeProvider/selectedModel are then placeholders and must not be launched or recorded.
-  let startOnPool = false;
+  let startOnPool = explicitMixedPool;
   let activeProvider = compatible.find(lp => lp.id === prefs.lastCodexProvider) ?? compatible[0]!;
   let selectedModel = activeProvider.models.find(m => m.id === prefs.lastCodexModel) ?? activeProvider.models[0]!;
 
-  if (!configOnly && launchPlan.skip && launchPlan.target) {
+  if (startOnPool) {
+    // Explicit --pool --with-native: skip interactive picker and open mixed mode on the pool.
+  } else if (!configOnly && launchPlan.skip && launchPlan.target) {
     const resolved = findProviderAndModel(compatible, launchPlan.target);
     if (!resolved) {
       p.log.error(

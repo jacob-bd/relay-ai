@@ -54,6 +54,7 @@ export function prepareClaudeAutoPool(
   prefs: Pick<UserPreferences, 'freePool'> | undefined,
   providers: readonly LocalProvider[],
   now = Date.now(),
+  options: { force?: boolean } = {},
 ): ClaudeAutoPool | undefined {
   let pool: FreePoolPreferences;
   try {
@@ -61,7 +62,7 @@ export function prepareClaudeAutoPool(
   } catch {
     return undefined;
   }
-  if (pool.enabled !== true || pool.members.length === 0) return undefined;
+  if ((!options.force && pool.enabled !== true) || pool.members.length === 0) return undefined;
   const entry = poolCatalogEntry(pool, pool.receipts, 'claude', now);
   if (!entry) return undefined;
   if (!pool.members.some(member => servableClaudeMember(pool, providers, member, now))) return undefined;

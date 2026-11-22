@@ -14,6 +14,10 @@ export interface ModelTestResult {
   at: string;
   latencyMs?: number;
   toolsPassed?: boolean;
+  /** Whether the context window size was confirmed during testing. */
+  contextConfirmed?: boolean;
+  /** Context window token size confirmed or observed during the test. */
+  contextWindow?: number;
   /** Relay's own fixed message (never raw upstream text). */
   error?: string;
   /** Failure caused by limits, timeouts or the network, not by the model; never blocks adding it. */

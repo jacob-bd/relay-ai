@@ -58,14 +58,18 @@ interface PoolState {
 }
 
 /** Pool settings plus the pool members' providers, read fresh and without touching any credential. */
-export function loadPoolState(registryPath?: string, copilotData?: ReadonlyMap<string, Record<string, unknown> | undefined>): PoolState | undefined {
+export function loadPoolState(
+  registryPath?: string,
+  copilotData?: ReadonlyMap<string, Record<string, unknown> | undefined>,
+  ignoreEnabled = false,
+): PoolState | undefined {
   let pool: FreePoolPreferences;
   try {
     pool = parseFreePool(loadPreferences().freePool);
   } catch {
     return undefined;
   }
-  if (pool.enabled !== true || pool.members.length === 0) return undefined;
+  if ((!ignoreEnabled && pool.enabled !== true) || pool.members.length === 0) return undefined;
   const ids = new Set(pool.members.map(member => member.providerId));
   const registry = loadCoreRegistry(registryPath);
   const trimmed = {
@@ -83,8 +87,8 @@ export function loadPoolState(registryPath?: string, copilotData?: ReadonlyMap<s
 }
 
 /** The state a real request judges members by: Copilot's plan is read (only for Copilot members), nothing else. */
-export async function loadPoolStateForCall(): Promise<PoolState | undefined> {
-  const first = loadPoolState();
+export async function loadPoolStateForCall(ignoreEnabled = false): Promise<PoolState | undefined> {
+  const first = loadPoolState(undefined, undefined, ignoreEnabled);
   if (!first) return undefined;
   const copilot = first.pool.members.filter(member => isProviderKind(member.providerId, 'github-copilot'));
   if (copilot.length === 0) return first;
@@ -95,7 +99,7 @@ export async function loadPoolStateForCall(): Promise<PoolState | undefined> {
     if (!provider || data.has(provider.id)) continue;
     try { data.set(provider.id, await resolveProviderOAuthProviderData(provider.authRef)); } catch { data.set(provider.id, undefined); }
   }
-  return loadPoolState(undefined, data);
+  return loadPoolState(undefined, data, ignoreEnabled);
 }
 
 interface ServableMember {
@@ -356,9 +360,12 @@ function buildRoutes(members: readonly ServableMember[], context: BuildContext, 
 }
 
 /** Runs one call through the shared coordinator and yields the members' spec stream parts. */
-async function* runPool(options: CreateRelayModelOptions | undefined, call: LanguageModelV4CallOptions): AsyncGenerator<Part> {
+async function* runPool(
+  options: (CreateRelayModelOptions & { ignoreEnabled?: boolean }) | undefined,
+  call: LanguageModelV4CallOptions,
+): AsyncGenerator<Part> {
   const now = Date.now();
-  const state = await loadPoolStateForCall();
+  const state = await loadPoolStateForCall(options?.ignoreEnabled === true);
   if (!state) {
     throw new RelayCoreError('UNSUPPORTED_MODEL', 'Relay Free Pool is not enabled or has no members — set it up with `relay-ai pool` or relay-ai ui.', { routeId: RELAY_POOL_ROUTE_ID });
   }
@@ -459,8 +466,8 @@ async function generateFromStream(parts: AsyncIterable<Part>): Promise<LanguageM
 }
 
 /** The pool as a LanguageModel. Pool settings are read on every call. */
-export function createRelayPoolModel(options?: CreateRelayModelOptions): LanguageModel {
-  const state = loadPoolState();
+export function createRelayPoolModel(options?: CreateRelayModelOptions & { ignoreEnabled?: boolean }): LanguageModel {
+  const state = loadPoolState(undefined, undefined, options?.ignoreEnabled === true);
   const members = state ? servableMembers(state, Date.now(), false) : [];
   if (!state || members.length === 0) {
     throw new RelayCoreError('UNSUPPORTED_MODEL', 'Relay Free Pool is not enabled or has no usable members — set it up with `relay-ai pool` or relay-ai ui.', { routeId: RELAY_POOL_ROUTE_ID });

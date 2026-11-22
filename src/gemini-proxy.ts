@@ -21,6 +21,7 @@ import { routeLookupIds } from './context-model-id.js';
 import { formatUpstreamError } from './codex/upstream-error.js';
 import { extractConversationId, openCodeGoHeaders } from './opencode-session.js';
 import { generateTextStreamingIfRequired } from './stream-only-model.js';
+import { createRelayPoolModel, RELAY_POOL_PROVIDER_ID } from './core/pool-model.js';
 
 function mapFinishReason(reason: string): string {
   if (reason === 'stop' || reason === 'tool-calls') return 'STOP';
@@ -246,6 +247,9 @@ export async function startGeminiProxy(
 
   // Helper to lazily resolve language model when needed
   const getOrInitModel = async (route: ProxyRoute, sessionId?: string): Promise<LanguageModel> => {
+    if (route.providerId === RELAY_POOL_PROVIDER_ID) {
+      return createRelayPoolModel({ ...(sessionId ? { sessionId } : {}), ignoreEnabled: true });
+    }
     const cacheKey = `${route.aliasId}\0${sessionId ?? ''}`;
     let m = models.get(cacheKey);
     if (!m) {
@@ -281,6 +285,7 @@ export async function startGeminiProxy(
   let sessionRouteOverride: ProxyRoute | undefined = undefined;
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    let poolRequest = false;
     try {
       const url = req.url ?? '';
       plog(`${req.method} ${url}`);
@@ -364,41 +369,63 @@ export async function startGeminiProxy(
 
         const conversationId = extractConversationId(req.headers, body);
         const languageModel = await getOrInitModel(route, conversationId);
-        const requestHeaders = openCodeGoHeaders(
-          route.providerId,
-          route.baseURL,
-          conversationId,
-          route.headers,
-        );
-        const params = applyClaudeCodeOAuthIdentity(
-          { ...route, upstreamModelId: route.realModelId },
-          translateGeminiRequest(body, {
-            maxTools: maxToolsForNpm(route.npm),
-            ...(requestHeaders ? { requestHeaders } : {}),
-          }),
-        );
-        const requestedThinkingLevel = typeof body?.generationConfig?.thinkingConfig?.thinkingLevel === 'string'
-          ? body.generationConfig.thinkingConfig.thinkingLevel.trim().toLowerCase()
-          : 'high';
-        params.providerOptions = deepMergeProviderOptions(
-          params.providerOptions,
-          deepMergeProviderOptions(
-            thinkingProviderOptions(route.npm || '@ai-sdk/openai-compatible'),
-            effortProviderOptions(route.npm || '@ai-sdk/openai-compatible', requestedThinkingLevel || 'high', route.realModelId, route),
-          ),
-        );
+        const isPoolRoute = route.providerId === RELAY_POOL_PROVIDER_ID;
+        poolRequest = isPoolRoute;
+        const requestHeaders = isPoolRoute
+          ? undefined
+          : openCodeGoHeaders(
+              route.providerId,
+              route.baseURL,
+              conversationId,
+              route.headers,
+            );
+        const translated = translateGeminiRequest(body, {
+          maxTools: isPoolRoute ? undefined : maxToolsForNpm(route.npm),
+          ...(requestHeaders ? { requestHeaders } : {}),
+        });
+        const params = isPoolRoute
+          ? translated
+          : applyClaudeCodeOAuthIdentity(
+              { ...route, upstreamModelId: route.realModelId },
+              translated,
+            );
+        if (!isPoolRoute) {
+          const requestedThinkingLevel = typeof body?.generationConfig?.thinkingConfig?.thinkingLevel === 'string'
+            ? body.generationConfig.thinkingConfig.thinkingLevel.trim().toLowerCase()
+            : 'high';
+          params.providerOptions = deepMergeProviderOptions(
+            params.providerOptions,
+            deepMergeProviderOptions(
+              thinkingProviderOptions(route.npm || '@ai-sdk/openai-compatible'),
+              effortProviderOptions(route.npm || '@ai-sdk/openai-compatible', requestedThinkingLevel || 'high', route.realModelId, route),
+            ),
+          );
+        }
         plog(`Translated SDK params:\n${JSON.stringify(params, null, 2)}`);
 
+        const abort = new AbortController();
+        res.once('close', () => { if (!res.writableFinished) abort.abort(); });
+
         if (isStream) {
-          res.writeHead(200, {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-          });
+          const ensureSseHeaders = () => {
+            if (!res.headersSent) {
+              res.writeHead(200, {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+              });
+            }
+          };
+          const writeSseChunk = (payload: unknown) => {
+            ensureSseHeaders();
+            res.write(`data: ${JSON.stringify(payload)}\n\n`);
+          };
+          if (!isPoolRoute) ensureSseHeaders();
 
           plog('Starting streamText...');
           const { stream } = streamText({
             model: languageModel,
+            abortSignal: abort.signal,
             ...params,
           });
 
@@ -416,7 +443,7 @@ export async function startGeminiProxy(
                 candidates: [{ content: { role: 'model', parts: [{ text: `\n</thinking>\n\n` }] } }],
                 modelVersion: route.aliasId,
               };
-              res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+              writeSseChunk(chunk);
             }
 
             if (p.type === 'reasoning') {
@@ -429,7 +456,7 @@ export async function startGeminiProxy(
                 candidates: [{ content: { role: 'model', parts: [{ text }] } }],
                 modelVersion: route.aliasId,
               };
-              res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+              writeSseChunk(chunk);
             } else if (p.type === 'text-delta') {
               let text = p.textDelta ?? p.text ?? '';
               if (isThinking) {
@@ -445,9 +472,8 @@ export async function startGeminiProxy(
                 }],
                 modelVersion: route.aliasId,
               };
-              const data = `data: ${JSON.stringify(chunk)}\n\n`;
               plog(`Streaming text delta: ${p.textDelta}`);
-              res.write(data);
+              writeSseChunk(chunk);
             } else if (p.type === 'tool-input-start') {
               toolCallBuffers.set(p.toolCallId, { name: p.toolName, json: '' });
             } else if (p.type === 'tool-input-delta') {
@@ -470,7 +496,7 @@ export async function startGeminiProxy(
                 }],
                 modelVersion: route.aliasId,
               };
-              res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+              writeSseChunk(chunk);
             } else if (p.type === 'finish') {
               const chunk = {
                 candidates: [{
@@ -483,9 +509,10 @@ export async function startGeminiProxy(
                 modelVersion: route.aliasId,
               };
               plog(`Stream finish. Reason: ${p.finishReason}`);
-              res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+              writeSseChunk(chunk);
             }
           }
+          ensureSseHeaders();
           res.end();
           plog('Stream ended.');
         } else {
@@ -493,6 +520,7 @@ export async function startGeminiProxy(
           plog('Starting generateText...');
           const result = await generateTextStreamingIfRequired({
             model: languageModel,
+            abortSignal: abort.signal,
             ...params,
           });
           plog('generateText finished.');
@@ -543,8 +571,13 @@ export async function startGeminiProxy(
       if (debug) {
         console.error(`[Gemini Proxy] ${errMsg}`);
       }
+      if (res.destroyed || res.writableEnded) return;
       if (!res.headersSent) {
-        sendMockGeminiResponse(res, `⚠ ${errMsg}`, req.url?.includes('streamGenerateContent') ?? false);
+        if (poolRequest) {
+          sendJson(res, 502, { error: { code: 502, message: errMsg, status: 'UNAVAILABLE' } });
+        } else {
+          sendMockGeminiResponse(res, `⚠ ${errMsg}`, req.url?.includes('streamGenerateContent') ?? false);
+        }
       } else {
         // Headers already sent — we're mid-SSE stream; emit a normal Gemini text chunk before closing.
         try {

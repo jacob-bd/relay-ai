@@ -188,6 +188,7 @@ ${pc.bold('Options:')}
                --with-native, favorites and --yes: relay-ai providers add vertex-anthropic)
   --with-native Load native Codex models beside Relay models for this launch
   --relay-only Keep the current Relay-only launch behavior
+  --pool       Launch the shared free-model pool (requires relay-ai pool verify)
   --yes, -y     Approve a fully specified launch and skip restart prompts
   --restore    Restore Codex config after an interrupted app session
   --config     Preview the generated Codex app configuration without launching
@@ -419,7 +420,7 @@ async function runCodexAppVertexLaunch(configOnly: boolean, trace = false): Prom
   }
 }
 
-export async function runCodexAppCommand(args: string[], opts: { vertex?: boolean; launchProvider?: string; launchModel?: string; codexLaunchMode?: 'mixed' | 'relay-only'; assumeYes?: boolean } = {}): Promise<number> {
+export async function runCodexAppCommand(args: string[], opts: { vertex?: boolean; launchProvider?: string; launchModel?: string; codexLaunchMode?: 'mixed' | 'relay-only'; assumeYes?: boolean; pool?: boolean } = {}): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(codexAppHelpText());
     return 0;
@@ -509,7 +510,9 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
   }
 
   const prefs = loadPreferences();
-  const additivePool = additivePoolPreferences(prefs);
+  const explicitPool = opts.pool === true
+    || (launchProvider === 'relay-free-pool' && opts.launchModel === 'relay-free-pool');
+  const additivePool = additivePoolPreferences(prefs, { force: explicitPool });
   const appAdditive = additivePool
     ? createAdditivePoolRuntime(additivePool, providersForPicker(catalog), { appCatalog: true })
     : undefined;
@@ -522,7 +525,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
 
   let favorites = prefs.favoriteModels ?? [];
   let mixedMode = opts.codexLaunchMode === 'mixed';
-  if (!configOnly && isTty && !(launchProvider && opts.launchModel) && opts.codexLaunchMode === undefined) {
+  if (!configOnly && isTty && !explicitPool && !(launchProvider && opts.launchModel) && opts.codexLaunchMode === undefined) {
     const selectedLaunchMode = await pickCodexLaunchMode('ChatGPT');
     if (!selectedLaunchMode) return 0;
     mixedMode = selectedLaunchMode === 'mixed';
@@ -542,8 +545,8 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
   // --config must preview the exact unattended launch selection. Ignoring
   // explicit flags here made a safe preview silently show the previously saved
   // model instead of the requested provider/model pair.
-  if (launchProvider === 'relay-free-pool' && opts.launchModel === 'relay-free-pool') {
-    // The UI launches the free pool as provider = model = relay-free-pool; the pool is the whole session.
+  if (explicitPool) {
+    // --pool (or UI provider = model = relay-free-pool): start the session on the free pool.
     startOnPool = true;
   } else if (codexAppUsesExplicitSelection(configOnly, launchProvider, opts.launchModel)) {
     const bootSelection = resolveBootSelection(
@@ -813,6 +816,9 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
         for (const r of resolvedFavorites) {
           console.log(`    ${pc.cyan(r.model.id)}  ${pc.dim(`(${r.providerName})`)}`);
         }
+      } else if (poolStart) {
+        console.log(`  ${pc.bold('Mode:')}     Relay Free Pool`);
+        console.log(`  ${pc.bold('Model:')}    ${poolStart.display_name} (${FREE_POOL_MODEL_ID})`);
       } else {
         console.log(`  ${pc.bold('Mode:')}     Single model`);
         console.log(`  ${pc.bold('Provider:')} ${activeProvider.name}`);

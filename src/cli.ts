@@ -299,7 +299,7 @@ export function parseArgs(args: string[]): ParsedArgs {
         continue;
       }
       if (arg === '--pool') {
-        parsed.error = '--pool is only supported by relay-ai codex';
+        parsed.pool = true;
         continue;
       }
       if (arg === '--relay-only') {
@@ -324,6 +324,7 @@ export function parseArgs(args: string[]): ParsedArgs {
       const arg = rest[i]!;
       if (arg === '--help' || arg === '-h') { parsed.showHelp = true; continue; }
       if (arg === '--version' || arg === '-v') { parsed.showVersion = true; continue; }
+      if (arg === '--pool') { parsed.pool = true; continue; }
       if (arg === '--http-proxy') {
         parsed.error = '--http-proxy is available only for relay-ai claude';
         return parsed;
@@ -363,6 +364,7 @@ export function parseArgs(args: string[]): ParsedArgs {
       }
       if (arg === '--pool') {
         parsed.codexPool = true;
+        parsed.pool = true;
         continue;
       }
       if (arg === '--help' || arg === '-h') {
@@ -390,6 +392,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       const arg = rest[i]!;
       if (arg === '--trace') {
         parsed.trace = true;
+        continue;
+      }
+      if (arg === '--pool') {
+        parsed.pool = true;
         continue;
       }
       if (arg === '--help' || arg === '-h') {
@@ -421,6 +427,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       }
       if (arg === '--trace') {
         parsed.trace = true;
+        continue;
+      }
+      if (arg === '--pool') {
+        parsed.pool = true;
         continue;
       }
       if (arg === '--help' || arg === '-h') {
@@ -460,6 +470,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       }
       if (arg === '--trace') {
         parsed.trace = true;
+        continue;
+      }
+      if (arg === '--pool') {
+        parsed.pool = true;
         continue;
       }
       if (arg === '--help' || arg === '-h') {
@@ -529,7 +543,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (parsed.codexLaunchMode && parsed.codexLaunchMode !== mode) parsed.error = '--with-native and --relay-only cannot be used together';
       parsed.codexLaunchMode = mode;
     }
-    if (arg === '--pool') parsed.claudePool = true;
+    if (arg === '--pool') {
+      parsed.claudePool = true;
+      parsed.pool = true;
+    }
     if (arg === '--help' || arg === '-h') parsed.showHelp = true;
     if (arg === '--version' || arg === '-v') parsed.showVersion = true;
   }
@@ -786,6 +803,7 @@ ${pc.bold('Usage:')}
 ${pc.bold('Relay options:')}
   --provider <id>    Use a specific provider (skip picker)
   --model <id>       Use a specific model (skip picker)
+  --pool             Launch the shared free-model pool (requires relay-ai pool verify)
   --trace            Write debug log to ~/.relay-ai/logs/antigravity-agy-debug.log
   -h, --help         Show this help
   -v, --version      Show version
@@ -813,6 +831,7 @@ ${pc.bold('Usage:')}
 ${pc.bold('Relay options:')}
   --provider <id>    Use a specific provider (skip picker)
   --model <id>       Use a specific model (skip picker)
+  --pool             Launch the shared free-model pool (requires relay-ai pool verify)
   --use-existing-profile Use existing profile instead of isolated Relay profile
   --restore          Restore normal configuration if previous session crashed
   --trace            Write debug log to ~/.relay-ai/logs/antigravity-ide-debug.log
@@ -845,6 +864,7 @@ ${pc.bold('Usage:')}
 ${pc.bold('Relay options:')}
   --provider <id>    Use a specific provider (skip picker)
   --model <id>       Use a specific model (skip picker)
+  --pool             Launch the shared free-model pool (requires relay-ai pool verify)
   --trace            Write debug log to ~/.relay-ai/logs/antigravity-app-debug.log
   -h, --help         Show this help
   -v, --version      Show version
@@ -1257,7 +1277,8 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     return 1;
   }
 
-  if (parsed.claudePool) {
+  const claudePoolWithNative = Boolean(parsed.claudePool && (httpProxy || codexLaunchMode === 'mixed'));
+  if (parsed.claudePool && !claudePoolWithNative) {
     const pool = parseFreePool(loadPreferences().freePool);
     if (pool.members.length === 0) {
       console.error(pc.red('No free pool members. Add one with: relay-ai pool add <provider-account> <model>'));
@@ -1346,7 +1367,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   const conflicts = detectConflicts();
 
   let favorites = dryRun ? [] : (prefs.favoriteModels ?? []);
-  const httpProxyOnly = Boolean(httpProxy && !launchProvider && !launchModel);
+  const httpProxyOnly = Boolean((httpProxy && !launchProvider && !launchModel) || claudePoolWithNative);
   const launchPlan = httpProxyOnly
     ? { skip: true, target: null }
     : planLaunchWizard({
@@ -1414,21 +1435,25 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   }
 
   // Relay Free Pool joins every supported Claude launch when the pool is
-  // enabled and at least one member has fresh, servable Claude evidence. With
-  // no such member this is undefined and the launch path is unchanged.
-  const autoPool = dryRun || parsed.claudePool
+  // enabled (or explicitly requested via --pool) and at least one member has
+  // fresh, servable Claude evidence.
+  const autoPool = dryRun || (parsed.claudePool && !claudePoolWithNative)
     ? undefined
-    : prepareClaudeAutoPool(prefs, catalog);
+    : prepareClaudeAutoPool(prefs, catalog, Date.now(), { force: claudePoolWithNative });
   if (autoPool) await warnDisabledPoolMembers(catalog, autoPool.pool);
   if (autoPool) switchMenuActive = true;
 
-  const runTransparentProxy = async (selected?: FavoriteModel): Promise<number> => {
+  const runTransparentProxy = async (selected?: FavoriteModel, startOnPool = false): Promise<number> => {
+    if (startOnPool && !autoPool) {
+      console.error(pc.red('No verified free pool member is currently Claude-compatible. Run: relay-ai pool verify'));
+      return 1;
+    }
     if (dryRun) {
       console.log('');
       console.log(pc.bold(pc.cyan('  DRY RUN — would keep Anthropic and add Relay models:')));
       console.log('');
       console.log(`  ${pc.bold('Anthropic:')} normal Claude Code login and models`);
-      console.log(`  ${pc.bold('Selected:')}  ${selected ? `${selected.providerId} / ${selected.modelId}` : '(none)'}`);
+      console.log(`  ${pc.bold('Selected:')}  ${startOnPool ? autoPool!.displayName : selected ? `${selected.providerId} / ${selected.modelId}` : '(none)'}`);
       console.log(`  ${pc.bold('Favorites:')} ${favorites.length} saved`);
       console.log('');
       console.log(pc.dim('  (dry run complete — Claude Code was NOT launched)'));
@@ -1450,6 +1475,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
         pool: autoPool
           ? { runtime: autoPool.runtime, displayName: autoPool.displayName, contextWindow: autoPool.contextWindow }
           : undefined,
+        startOnPool,
         onProxyReady: proxy => {
           if (agentStdout) return;
           const count = proxy.handle.modelIds.length;
@@ -1481,7 +1507,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     }
   };
 
-  if (httpProxyOnly) return runTransparentProxy();
+  if (httpProxyOnly) return runTransparentProxy(undefined, claudePoolWithNative);
 
   // Same first question as Codex/ChatGPT. Skipped for --http-proxy, --with-native/--relay-only, or an explicit provider/model.
   let launchMode: 'mixed' | 'relay-only' = httpProxy ? 'mixed' : codexLaunchMode ?? 'relay-only';
@@ -1551,8 +1577,8 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       const providerChoice = chosen as string;
 
       if (providerChoice === '__pool__' && autoPool) {
-        if (launchMode === 'mixed' && !httpProxy) {
-          p.log.info('Starting on Relay Free Pool uses Relay models only for now (your normal Claude models are not added).');
+        if (launchMode === 'mixed') {
+          return runTransparentProxy(undefined, true);
         }
         const resolvePoolFavorite = makeRouteResolver(catalog.length > 0 ? catalog : null);
         const favoriteRoutes = favorites
@@ -2072,7 +2098,7 @@ Options:
       console.log(codexAppHelpText());
       return 0;
     }
-    return runCodexAppCommand(parsed.claudeArgs, { vertex: parsed.vertex, launchProvider: parsed.launchProvider, launchModel: parsed.launchModel, codexLaunchMode: parsed.codexLaunchMode, assumeYes: parsed.assumeYes });
+    return runCodexAppCommand(parsed.claudeArgs, { vertex: parsed.vertex, launchProvider: parsed.launchProvider, launchModel: parsed.launchModel, codexLaunchMode: parsed.codexLaunchMode, assumeYes: parsed.assumeYes, pool: parsed.pool });
   }
 
   if (parsed.command === 'claude-app') {
@@ -2084,7 +2110,7 @@ Options:
       console.log(claudeAppHelpText());
       return 0;
     }
-    return runClaudeAppCommand(parsed.claudeArgs, { launchProvider: parsed.launchProvider, launchModel: parsed.launchModel });
+    return runClaudeAppCommand(parsed.claudeArgs, { launchProvider: parsed.launchProvider, launchModel: parsed.launchModel, pool: parsed.pool });
   }
 
   if (parsed.command === 'codex') {
@@ -2117,6 +2143,7 @@ Options:
     return runGeminiCommand(parsed.claudeArgs, parsed.trace, {
       launchProvider: parsed.launchProvider,
       launchModel: parsed.launchModel,
+      pool: parsed.pool,
     });
   }
 
@@ -2132,6 +2159,7 @@ Options:
     return runAgyCommand(parsed.claudeArgs, parsed.trace, {
       launchProvider: parsed.launchProvider,
       launchModel: parsed.launchModel,
+      pool: parsed.pool,
     });
   }
 
@@ -2147,6 +2175,7 @@ Options:
     return runAntigravityAppCommand(parsed.claudeArgs, parsed.trace, {
       launchProvider: parsed.launchProvider,
       launchModel: parsed.launchModel,
+      pool: parsed.pool,
     });
   }
 
@@ -2162,6 +2191,7 @@ Options:
     return runAntigravityIdeCommand(parsed.claudeArgs, parsed.trace, {
       launchProvider: parsed.launchProvider,
       launchModel: parsed.launchModel,
+      pool: parsed.pool,
       useExistingProfile: parsed.useExistingProfile,
       restore: parsed.restore,
     });

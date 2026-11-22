@@ -1,6 +1,7 @@
 import { launchClaude } from '../launch.js';
 import type { FavoriteModel, LocalProvider } from '../types.js';
-import type { ClaudePoolRuntime } from '../pool/claude-runtime.js';
+import { CLAUDE_POOL_MODEL_ID, type ClaudePoolRuntime } from '../pool/claude-runtime.js';
+import { claudeCodeClientModelId } from '../context-model-id.js';
 import { writeGatewayDiscoveryCache } from './discovery-cache.js';
 import {
   buildHttpProxyChildEnv,
@@ -21,6 +22,8 @@ export interface TransparentClaudeLaunchOptions {
   debug?: boolean;
   /** Relay Free Pool injected beside the native and favorite models. */
   pool?: { runtime: ClaudePoolRuntime; displayName: string; contextWindow: number };
+  /** When true (with `pool`), launch Claude Code with Relay Free Pool as the starting model. */
+  startOnPool?: boolean;
   onProxyReady?: (proxy: ConfiguredHttpProxy) => void;
 }
 
@@ -69,9 +72,12 @@ export async function launchClaudeWithHttpProxy(
       proxy.handle.caCertPath,
     );
     writeGatewayDiscoveryCache(options.baseEnv, proxy.loaded.routes, options.pool);
+    const startingModel = options.startOnPool && options.pool
+      ? claudeCodeClientModelId(CLAUDE_POOL_MODEL_ID, options.pool.contextWindow)
+      : proxy.startingModel;
     const exitCode = await dependencies.launch(
       childEnv,
-      proxy.startingModel,
+      startingModel,
       options.claudeArgs,
     );
     return { exitCode, proxy };

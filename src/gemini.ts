@@ -20,6 +20,9 @@ import { rewriteGeminiBackendRoutes } from './gemini/backend-routes.js';
 import { VERSION } from './constants.js';
 import { providersForTarget } from './target-compatibility.js';
 import { pickerRefresh } from './picker-refresh.js';
+import { parseFreePool } from './pool/membership.js';
+import { poolCatalogEntry } from './pool/catalog.js';
+import { loadPoolState, servableMembers, RELAY_POOL_MODEL_ID, RELAY_POOL_PROVIDER_ID } from './core/pool-model.js';
 
 export function geminiHelpText(): string {
   return `${pc.bold('relay-ai gemini')} v${VERSION}
@@ -34,6 +37,7 @@ ${pc.bold('Options:')}
   --trace      Write proxy debug logs to ~/.relay-ai/logs/ and show errors on exit
   --provider   Boot provider id (skip wizard when paired with --model or non-interactive)
   --model      Boot model id (skip wizard when paired with --provider or non-interactive)
+  --pool       Launch the shared free-model pool (requires relay-ai pool verify)
   --help       Show this command help
   --version    Show version
 
@@ -59,7 +63,7 @@ ${pc.bold('Examples:')}
 export async function runGeminiCommand(
   geminiArgs: string[],
   trace = false,
-  launch: { launchProvider?: string; launchModel?: string } = {},
+  launch: { launchProvider?: string; launchModel?: string; pool?: boolean } = {},
 ): Promise<number> {
   if (geminiArgs.includes('--help') || geminiArgs.includes('-h')) {
     console.log(geminiHelpText());
@@ -79,6 +83,59 @@ export async function runGeminiCommand(
   setAgentStdoutMode(agentStdout);
 
   const prefs = loadPreferences();
+  const explicitPool = launch.pool === true
+    || (launch.launchProvider === RELAY_POOL_PROVIDER_ID && launch.launchModel === RELAY_POOL_MODEL_ID);
+  if (explicitPool) {
+    const pool = parseFreePool(prefs.freePool);
+    if (pool.members.length === 0) {
+      console.error(pc.red('No free pool members. Add one with: relay-ai pool add <provider-account> <model>'));
+      return 1;
+    }
+    const state = loadPoolState(undefined, undefined, true);
+    const members = state ? servableMembers(state, Date.now(), false) : [];
+    const entry = poolCatalogEntry(pool, pool.receipts, 'core');
+    if (!state || members.length === 0 || !entry) {
+      console.error(pc.red('No verified free pool members. Run: relay-ai pool verify'));
+      return 1;
+    }
+    const poolRoute: ProxyRoute = {
+      aliasId: RELAY_POOL_MODEL_ID,
+      realModelId: RELAY_POOL_MODEL_ID,
+      displayName: entry.display_name,
+      upstreamUrl: '',
+      apiKey: '',
+      modelFormat: 'openai',
+      contextWindow: entry.context_window,
+      providerId: RELAY_POOL_PROVIDER_ID,
+    };
+    let proxyHandle: ProxyHandle | null = null;
+    try {
+      proxyHandle = await startGeminiProxy([poolRoute], trace);
+    } catch (err) {
+      p.log.error(`Failed to start Gemini proxy: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+    const childEnv = prepareGeminiChildEnv(proxyHandle.port, proxyHandle.token);
+    if (!agentStdout) {
+      p.log.info(`Free pool mode - ${pool.members.length} member(s), ${members.length} ready.`);
+      p.log.info(`Gemini proxy started on port ${proxyHandle.port}`);
+    }
+    let exitCode = 1;
+    try {
+      exitCode = await launchGemini(geminiPath, RELAY_POOL_MODEL_ID, childEnv.env, passthroughArgs);
+    } finally {
+      childEnv.cleanup();
+      proxyHandle.close();
+    }
+    if (!agentStdout) {
+      p.log.info('Gemini proxy stopped.');
+    }
+    if (trace) {
+      printTraceLog(getGeminiProxyDebugLogPath());
+    }
+    return exitCode;
+  }
+
   const launchPlan = planLaunchWizard({
     explicit: { providerId: launch.launchProvider, modelId: launch.launchModel },
     childArgs: passthroughArgs,

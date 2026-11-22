@@ -155,14 +155,21 @@ describe('parseArgs', () => {
     expect(parseArgs(['codex-app', '--with-native']).codexLaunchMode).toBe('mixed');
   });
 
-  it('accepts --pool only for the Codex CLI', () => {
-    expect(parseArgs(['codex', '--pool'])).toMatchObject({ command: 'codex', codexPool: true, claudeArgs: [] });
-    for (const command of ['codex-app', 'chatgpt']) {
-      expect(parseArgs([command, '--pool'])).toMatchObject({
-        command: 'codex-app',
-        error: '--pool is only supported by relay-ai codex',
-        claudeArgs: [],
-      });
+  it('accepts --pool for every supported tool without forwarding it', () => {
+    expect(parseArgs(['claude', '--pool'])).toMatchObject({ command: 'claude', pool: true, claudePool: true, claudeArgs: [] });
+    expect(parseArgs(['codex', '--pool'])).toMatchObject({ command: 'codex', pool: true, codexPool: true, claudeArgs: [] });
+    for (const [input, expectedCommand] of [
+      ['codex-app', 'codex-app'],
+      ['chatgpt', 'codex-app'],
+      ['claude-app', 'claude-app'],
+      ['gemini', 'gemini'],
+      ['agy', 'agy'],
+      ['antigravity', 'antigravity'],
+      ['antigravity-ide', 'antigravity-ide'],
+    ] as const) {
+      const parsed = parseArgs([input, '--pool']);
+      expect(parsed).toMatchObject({ command: expectedCommand, pool: true, claudeArgs: [] });
+      expect(parsed.error).toBeUndefined();
     }
   });
 
@@ -611,11 +618,11 @@ describe('main routing', () => {
     );
   });
 
-  it('rejects --pool for the desktop app before dispatch', async () => {
+  it('accepts --pool for the ChatGPT/Codex desktop app and dispatches it', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     await expect(main(['chatgpt', '--pool'])).resolves.toBe(1);
-    expect(error.mock.calls.flat().join('\n')).toContain('--pool is only supported by relay-ai codex');
+    expect(error.mock.calls.flat().join('\n')).not.toContain('--pool is only supported by relay-ai codex');
   });
 
   it('resets and prints the provider trace for providers --trace', async () => {

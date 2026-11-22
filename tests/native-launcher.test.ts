@@ -216,28 +216,26 @@ describe('native-launcher', () => {
 });
 
 describe('free pool launch commands', () => {
-  it('uses --pool for the Claude Code and Codex CLIs', () => {
-    for (const app of ['claude', 'codex']) {
+  it('uses --pool for every supported tool', () => {
+    for (const app of ['claude', 'claude-app', 'codex', 'codex-app', 'gemini', 'antigravity', 'antigravity-ide', 'agy']) {
       assertLaunchCommandContains(getRelayLaunchCommand(app, { pool: true }), `relay-ai ${app} --pool`);
-    }
-  });
-
-  it('starts the apps and Antigravity on the pool as a provider/model pair', () => {
-    for (const app of ['claude-app', 'codex-app', 'antigravity', 'antigravity-ide', 'agy']) {
-      assertLaunchCommandContains(
-        getRelayLaunchCommand(app, { pool: true }),
-        `${app} --provider relay-free-pool --model relay-free-pool`,
-      );
-      // The picker sends the virtual model as a provider/model selection; it must map to the same launch.
+      // The picker sends the virtual model as a provider/model selection; it must map to the same --pool launch.
       assertLaunchCommandContains(
         getRelayLaunchCommand(app, { providerId: 'relay-free-pool', modelId: 'relay-free-pool' }),
-        `${app} --provider relay-free-pool --model relay-free-pool`,
+        `relay-ai ${app} --pool`,
       );
     }
   });
 
-  it('refuses the pool for Gemini CLI and when combined with another model', () => {
-    expect(() => getRelayLaunchCommand('gemini', { pool: true })).toThrow(/cannot start on the free pool/);
+  it('combines --pool with native/mixed mode on tools that support it', () => {
+    assertLaunchCommandContains(getRelayLaunchCommand('codex', { pool: true, withNative: true }), 'relay-ai codex --pool --with-native');
+    assertLaunchCommandContains(getRelayLaunchCommand('codex-app', { pool: true, withNative: true }), 'relay-ai codex-app --pool --with-native');
+    assertLaunchCommandContains(getRelayLaunchCommand('codex-app', { providerId: 'relay-free-pool', modelId: 'relay-free-pool', withNative: true }), 'relay-ai codex-app --pool --with-native');
+    assertLaunchCommandContains(getRelayLaunchCommand('claude', { pool: true, httpProxy: true }), 'relay-ai claude --pool --http-proxy');
+    assertLaunchCommandContains(getRelayLaunchCommand('claude', { providerId: 'relay-free-pool', modelId: 'relay-free-pool', httpProxy: true }), 'relay-ai claude --pool --http-proxy');
+  });
+
+  it('refuses combining the pool with another model selection', () => {
     expect(() => getRelayLaunchCommand('claude-app', { pool: true, providerId: 'x', modelId: 'y' })).toThrow(/alone/);
   });
 });

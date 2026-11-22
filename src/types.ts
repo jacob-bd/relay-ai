@@ -210,8 +210,10 @@ export interface ParsedArgs {
   /** Whether Codex should expose native models beside Relay routes for this launch. */
   codexLaunchMode?: 'mixed' | 'relay-only';
   /** Launch the shared free-model pool instead of a concrete model. */
+  pool?: boolean;
+  /** Launch the shared free-model pool instead of a concrete model (Codex CLI alias). */
   codexPool?: boolean;
-  /** Launch the shared free-model pool through Claude Code. */
+  /** Launch the shared free-model pool through Claude Code (Claude CLI alias). */
   claudePool?: boolean;
   /** Start `relay-ai server` from saved/default settings without prompts. */
   serverQuick?: boolean;

@@ -2,6 +2,7 @@ import type { LanguageModel } from 'ai';
 import { poolFreeStatus } from '../free-models.js';
 import type { FavoriteModel, LocalProvider, PoolCapabilityReceipt } from '../types.js';
 import { NO_RECEIPT_EXPIRY, poolEndpointRevision } from './capabilities.js';
+import type { PoolFailure } from './errors.js';
 import { type PoolProbeResult } from './probe.js';
 
 /** Conservative reservation; a provider that accepts less fails pre-commit and falls back. */
@@ -17,7 +18,7 @@ export interface EnrollDeps {
 
 export type EnrollResult =
   | { member: FavoriteModel; status: 'verified'; receipt: PoolCapabilityReceipt }
-  | { member: FavoriteModel; status: 'skipped'; reason: string; diagnostic?: string };
+  | { member: FavoriteModel; status: 'skipped'; reason: string; diagnostic?: string; poolFailure?: PoolFailure };
 
 /** One explicit capability request; optional effort probes run only when supplied. */
 export async function verifyPoolMember(
@@ -49,7 +50,12 @@ export async function verifyPoolMember(
   const languageModel = await deps.createModel(provider, model, apiKey);
   const probe = await deps.probe(languageModel, signal);
   if (probe.text !== 'passed' || probe.tools !== 'passed') {
-    return { member, status: 'skipped', reason: 'probe-' + (probe.failure ?? 'failed') };
+    return {
+      member,
+      status: 'skipped',
+      reason: 'probe-' + (probe.failure ?? 'failed'),
+      ...(probe.poolFailure ? { poolFailure: probe.poolFailure } : {}),
+    };
   }
   // Antigravity always has the Auto row (no effort sent); verified effort rungs only add rows on top of it.
   const targets: ('codex' | 'claude' | 'antigravity' | 'core')[] = ['codex', 'claude', 'antigravity', 'core'];

@@ -79,7 +79,12 @@ export async function resolveAntigravityLaunchRoutes(
 
   // The pool is built first and its rows are reserved: effort variants of favorites can otherwise fill the whole
   // catalog (agy's slider lists every level of every favorite) and leave the pool no room at all.
-  const poolRoutes = await buildAntigravityLaunchPoolRows(opts.allProviders, Math.min(POOL_ROW_BUDGET, maxRoutes), opts.effortMode ?? 'rows', { warn: true });
+  const poolRoutes = await buildAntigravityLaunchPoolRows(
+    opts.allProviders,
+    Math.min(POOL_ROW_BUDGET, maxRoutes),
+    opts.effortMode ?? 'rows',
+    { warn: true, force: opts.startOnPool === true },
+  );
 
   // Effort variants can push later favorites past the cap; report those too.
   const routes = buildAntigravityRoutes(launchable, maxRoutes - poolRoutes.length, { effortMode: opts.effortMode });
@@ -110,13 +115,13 @@ export async function buildAntigravityLaunchPoolRows(
   allProviders: readonly LocalProvider[],
   maxRows: number,
   effortMode: AntigravityEffortMode,
-  options: { warn?: boolean } = {},
+  options: { warn?: boolean; force?: boolean } = {},
 ): Promise<AntigravityRoute[]> {
   const freePool = parseFreePool(loadPreferences().freePool);
   const hasPoolEvidence = freePool.receipts.some(receipt =>
     receipt.targets.includes('antigravity') && receipt.billingSafe
     && receiptInForce(receipt, Date.now()));
-  if (!freePool.enabled || !hasPoolEvidence || maxRows < 1) return [];
+  if ((!options.force && !freePool.enabled) || !hasPoolEvidence || maxRows < 1) return [];
   if (options.warn) await warnDisabledPoolMembers(allProviders, freePool);
   const apiKeys = new Map<string, string>();
   for (const member of freePool.members) {

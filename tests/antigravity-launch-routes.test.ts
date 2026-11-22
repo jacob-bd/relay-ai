@@ -448,8 +448,18 @@ describe('free pool row reservation', () => {
     expect(result!.routes.map(route => route.providerId)).toEqual(['relay-free-pool', 'favprov']);
     expect(result!.routes[0]!.catalogId).toBe('relay-free-pool-auto');
 
-    // Pool switched off: nothing to start on.
+    // Explicit --pool / startOnPool still works even when additive pool inclusion is switched off,
+    // while a normal launch does not include the pool when disabled.
     writeFileSync(join(home, 'config.json'), config(false));
+    const forced = await resolveAntigravityLaunchRoutes({ startOnPool: true, allProviders: [favProvider, member], maxRoutes: 10 });
+    expect(forced!.routes[0]!.catalogId).toBe('relay-free-pool-auto');
+    const normal = await resolveAntigravityLaunchRoutes({
+      provider: favProvider, model: favModel, allProviders: [favProvider, member], maxRoutes: 10,
+    });
+    expect(normal!.routes.some(route => route.providerId === 'relay-free-pool')).toBe(false);
+
+    // No verified receipts: nothing to start on.
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ freePool: { enabled: false, effort: 'auto', members: [{ providerId: 'poolprov', modelId: 'pm' }], receipts: [] } }));
     expect(await resolveAntigravityLaunchRoutes({ startOnPool: true, allProviders: [favProvider, member], maxRoutes: 10 })).toBeNull();
   });
 });

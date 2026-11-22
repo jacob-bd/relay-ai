@@ -382,12 +382,14 @@ RELAY FREE POOL (EXPERIMENTAL)
   One virtual model, "Relay Free Pool", backed by several zero-price models you add. Relay tries
   them strictly in your priority order and moves to the next only when one fails BEFORE any output
   reached the client (rate limit, timeout, error). No load balancing; free models differ in quality.
-  Where: Claude Code (relay-ai claude --pool), Codex CLI (relay-ai codex --pool), the ChatGPT/Codex
-  app, Claude Desktop, Antigravity (agy, app, IDE), and embedded apps through Relay Core.
+  Where: every supported tool accepts --pool (claude, claude-app, codex, codex-app/chatgpt, gemini,
+  agy, antigravity, antigravity-ide), plus embedded apps through Relay Core.
   Setup (nothing here sends a request unless it says so):
     relay-ai pool candidates [--search text]   free models available to add
     relay-ai pool add <provider> <model>       save a member (no test)
     relay-ai pool test <provider> <model>      1 small request + a tool call; saves the result
+    relay-ai pool verify [--all] [--reasoning] bulk check pool members (--all retests Ready too)
+    relay-ai pool clean [--disabled] [--unavailable] [--dry-run]  remove disabled/unavailable members
     relay-ai pool move <provider> <model> <up|down>   change priority
     relay-ai pool enable | disable             add/remove the pool in launched catalogs
     relay-ai pool status | list                readiness, context sizes, saved Test results
@@ -400,7 +402,8 @@ RELAY FREE POOL (EXPERIMENTAL)
   Disabled and skipped until a passing Test. Rate limits, 5xx and timeouts only cool it down.
   Context: the pool advertises its LARGEST member's window minus a 10% reserve; a request too big for
   a member skips that member for that request. If none fits: "No eligible free pool members".
-  Limits: 20 s to first content, 20 s idle, 60 s total, at most 8 attempts, 128 tools per member.
+  Limits: 15 s to first content, 20 s idle, 90 s total (with SSE/WS keepalives during failover),
+  at most 8 attempts, 128 tools per member.
   Relay Core (embedding apps such as alef): listRelayModels() lists "Relay Free Pool" with route id
   relay-free-pool::relay-free-pool; createRelayModel(routeId, { sessionId }) returns a LanguageModel
   that fails over across members. Pass sessionId to pin a conversation to the member that last

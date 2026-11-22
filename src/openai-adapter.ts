@@ -225,8 +225,9 @@ export async function streamOpenAiResponse(
   responseModelId: string,
   onChunk: (chunk: string) => void,
   log?: (msg: () => string) => void,
+  abortSignal?: AbortSignal,
 ): Promise<void> {
-  const { stream } = streamText({ model, ...(params as any) });
+  const { stream } = streamText({ model, ...(params as any), ...(abortSignal ? { abortSignal } : {}) });
   const baseData = {
     id: `chatcmpl-${Date.now()}`,
     object: 'chat.completion.chunk',

@@ -22,6 +22,8 @@ const GONE_PATTERN = new RegExp([
   String.raw`\b(?:deprecated|decommissioned|discontinued|retired|sunset)\b[^.\n]{0,20}\bmodel\b`,
   String.raw`\bthis model (?:was|has been|is) (?:deprecated|decommissioned|discontinued|retired|removed|shut down)`,
   String.raw`\bunknown model\b`,
+  String.raw`\bnot a valid model id\b`,
+  String.raw`\bmodel id is not valid\b`,
 ].join('|'), 'i');
 const PROMO_PATTERN = new RegExp([
   // The model's own free access ended. "free trial expired" is account-wide and is a quota matter, not a verdict on one model.
@@ -65,7 +67,7 @@ export function poolFailure(error: unknown, now = Date.now()): PoolFailure {
   if (status === 402) return { kind: 'quota', status };
   if (status === 404 || status === 410) return { kind: 'missing', status };
   if ([401, 403, 404].includes(status ?? 0)) return { kind: 'access', status };
-  if (status === 400 && /context.{0,20}(length|window|exceed)|prompt.{0,20}too long/i.test(value?.message ?? '')) return { kind: 'context', status };
+  if (status === 400 && /context.{0,20}(?:length|window|exceed)|maximum context|prompt.{0,20}too long|too many tokens|token limit|request too large/i.test(text)) return { kind: 'context', status };
   if (status === 400 || status === 422) return { kind: 'invalid', status };
   if ((status !== undefined && status >= 500) || /ECONNRESET|ETIMEDOUT|ENOTFOUND|first-content-timeout|idle-or-total-timeout|provisional-buffer-limit|missing-valid-finish|invalid-finish|stream-error|Pool route entered cooldown/.test(value?.message ?? '')) return { kind: 'transient', status };
   return { kind: 'unknown', status };

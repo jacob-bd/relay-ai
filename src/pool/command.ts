@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { clearDisabledPoolMember, disabledPoolMembers, warnDisabledPoolMembers } from './disabled.js';
-import { poolView, verifyUiPoolMember, invalidateUiPoolMember } from '../ui/pool-api.js';
+import {
+  clearDisabledPoolMember,
+  clearPoolMemberHealth,
+  disabledPoolMembers,
+  recordTestPoolFailure,
+  warnDisabledPoolMembers,
+} from './disabled.js';
+import { poolView, verifyUiPoolMember, invalidateUiPoolMember, recordUiPoolTestFailure } from '../ui/pool-api.js';
 import { setModelHidden, setContextWindowOverride } from '../registry/crud.js';
 import pc from 'picocolors';
 import { loadPreferences, savePreferences } from '../config.js';
@@ -34,7 +40,8 @@ export const poolHelpText = [
   '  reasoning <provider> <model>  Optional: up to 5 requests, no retries',
   '  hide | unhide <provider> <model>  Change provider-list visibility',
   '  effort <auto|low|medium|high>  Choose pool effort',
-  '  verify [--reasoning]          Explicit bulk check of saved members; skips fresh receipts',
+  '  verify [--all] [--reasoning]  Bulk check saved members (default skips Ready; --all retests Ready without dropping receipts on transient errors)',
+  '  clean [--disabled] [--unavailable] [--dry-run]  Remove disabled (default) and/or unavailable pool members',
   'Adding, enabling, refreshing the UI list, and launching never run tests.',
   'A saved Test result stays valid until the endpoint changes or the member is removed; it does not expire with time.',
   'Context requests may consume quota even when rejected. Reasoning adds up to 4 checks.',
@@ -123,7 +130,10 @@ export async function runPoolCommand(args: string[]): Promise<number> {
       }
       console.log('Test: 1 request, up to 1024 output tokens, no retries.');
       const result = await testModel(first, second, signal);
-      if (!result.ok) invalidateUiPoolMember(first, second);
+      if (!result.ok) {
+        invalidateUiPoolMember(first, second);
+        if (result.poolFailure) await recordUiPoolTestFailure(first, second, result.poolFailure);
+      }
       const readiness = result.ok ? await verifyUiPoolMember(first, second, signal, {
         evidence: { text: 'passed', tools: result.toolsPassed ? 'passed' : 'failed' },
       }) : undefined;
@@ -227,74 +237,190 @@ export async function runPoolCommand(args: string[]): Promise<number> {
       console.log(JSON.stringify(pool, null, 2));
       return 0;
     }
-    if (action === 'verify' && (args.length === 1 || (args.length === 2 && first === '--reasoning'))) {
+    if (action === 'clean') {
+      const rest = args.slice(1);
+      let includeDisabled = false;
+      let includeUnavailable = false;
+      let dryRun = false;
+      for (const flag of rest) {
+        if (flag === '--disabled') includeDisabled = true;
+        else if (flag === '--unavailable') includeUnavailable = true;
+        else if (flag === '--dry-run') dryRun = true;
+        else throw new Error(poolHelpText);
+      }
+      if (!includeDisabled && !includeUnavailable) includeDisabled = true;
+      const providers = await fetchProviderCatalog();
+      const disabledNow = await disabledPoolMembers(providers, pool);
+      const view = poolView(providers, pool, disabledNow);
+      const victims = view.members.filter(m =>
+        (includeDisabled && m.status === 'Disabled')
+        || (includeUnavailable && m.status === 'Unavailable'));
+      if (victims.length === 0) {
+        console.log('No matching pool members to remove.');
+        return 0;
+      }
+      for (const victim of victims) {
+        console.log((dryRun ? pc.yellow('would remove') : pc.red('removed')) + '  '
+          + victim.providerId + ' / ' + victim.modelId + '  ' + pc.dim(victim.status + (victim.reason ? ': ' + victim.reason : '')));
+      }
+      if (dryRun) {
+        console.log(pc.dim(`Dry run: ${victims.length} member(s) would be removed.`));
+        return 0;
+      }
+      let nextPool = parseFreePool(loadPreferences().freePool);
+      const oldReceipts = nextPool.receipts;
+      for (const victim of victims) {
+        nextPool = removeFreePoolMember(nextPool, { providerId: victim.providerId, modelId: victim.modelId });
+        await clearPoolMemberHealth({ providerId: victim.providerId, modelId: victim.modelId }, providers, oldReceipts);
+      }
+      savePreferences({ freePool: nextPool });
+      console.log(`Removed ${victims.length} pool member(s).`);
+      return 0;
+    }
+    if (action === 'verify') {
+      const rest = args.slice(1);
+      let includeAll = false;
+      let checkReasoning = false;
+      for (const flag of rest) {
+        if (flag === '--all') includeAll = true;
+        else if (flag === '--reasoning') checkReasoning = true;
+        else throw new Error(poolHelpText);
+      }
       if (pool.members.length === 0) throw new Error('Add pool members before verifying.');
       const providers = await fetchProviderCatalog();
-      const signal = new AbortController().signal;
+      const controller = new AbortController();
+      const onSignal = () => controller.abort();
+      process.once('SIGINT', onSignal);
+      process.once('SIGTERM', onSignal);
       const receipts: PoolCapabilityReceipt[] = [...pool.receipts];
       // A disabled member looks Ready from its receipt alone; it must be tested again to come back.
       const disabledNow = await disabledPoolMembers(providers, pool);
+      const initialView = poolView(providers, pool, disabledNow);
+      const statusByKey = new Map(initialView.members.map(item => [item.providerId + '/' + item.modelId, item]));
+      const rateLimitedProviders = new Set<string>();
+      let verifiedCount = 0;
+      let disabledCount = 0;
+      let unavailableCount = 0;
+      let transientCount = 0;
       let failed = 0;
-      console.log('Explicit bulk test: up to ' + pool.members.length * (first === '--reasoning' ? 5 : 1) + ' requests; fresh receipts are skipped.');
-      for (const member of pool.members) {
-        if (poolView(providers, pool, disabledNow).members.some(item => item.providerId === member.providerId && item.modelId === member.modelId && item.status === 'Ready') && first !== '--reasoning') continue;
-        const foundProvider = providers.find(item => item.id === member.providerId);
-        const foundModel = foundProvider?.models.find(item => item.id === member.modelId);
-        const result = await verifyPoolMember(member, providers, signal, {
-          resolveKey: resolveLocalProviderApiKey,
-          createModel: (provider, model, apiKey) => createLanguageModel({
-            npm: model.npm!, modelId: model.upstreamModelId,
-            apiKey, baseURL: model.apiBaseUrl, providerId: provider.id,
-            authType: provider.authType, oauthAccountId: provider.oauthAccountId,
-            providerData: provider.providerData,
-            headers: poolProviderHeaders(provider, model, `relay-pool-verify-${randomUUID()}`),
-            sessionId: `relay-pool-verify-${randomUUID()}`,
-            refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
-          }),
-          probe: (languageModel, signal) => probePoolModel(
-            languageModel,
-            signal,
-            20_000,
-            traceProbeFailure(member.providerId + '/' + member.modelId + ' probe'),
-          ),
-          probeEffort: first === '--reasoning' && foundProvider && foundModel
-            ? (languageModel, level) => probePoolEffort(
-              languageModel,
-              effortProviderOptions(foundModel.npm!, level, foundModel.upstreamModelId, {
-                ...foundModel, providerId: foundProvider.id, apiBaseUrl: foundModel.apiBaseUrl,
-              }) as never,
-              signal,
-              20_000,
-              traceProbeFailure(member.providerId + '/' + member.modelId + ' effort ' + level),
-            )
-            : undefined,
-        });
-        if (result.status === 'verified') {
-          const index = receipts.findIndex(receipt =>
-            receipt.member.providerId === member.providerId && receipt.member.modelId === member.modelId);
-          if (index === -1) receipts.push(result.receipt);
-          else receipts[index] = result.receipt;
-          await clearDisabledPoolMember(member, result.receipt.endpointRevision);
-          console.log(pc.green('verified') + '  ' + member.providerId + ' / ' + member.modelId);
-        } else {
-          failed++;
-          for (let i = receipts.length - 1; i >= 0; i--) {
-            if (receipts[i].member.providerId === member.providerId && receipts[i].member.modelId === member.modelId) receipts.splice(i, 1);
+      console.log('Explicit bulk test: up to ' + pool.members.length * (checkReasoning ? 5 : 1) + ' requests'
+        + (includeAll || checkReasoning ? ' (retesting all eligible members).' : '; Ready members are skipped (use --all to retest them).'));
+      try {
+        for (const member of pool.members) {
+          if (controller.signal.aborted) break;
+          const key = member.providerId + '/' + member.modelId;
+          const viewEntry = statusByKey.get(key);
+          if (viewEntry?.status === 'Unavailable') {
+            unavailableCount++;
+            console.log(pc.red('unavailable') + '  ' + member.providerId + ' / ' + member.modelId + '  ' + pc.dim(viewEntry.reason ?? 'Model is unavailable or hidden'));
+            continue;
           }
-          console.log(pc.yellow('skipped ') + '  ' + member.providerId + ' / ' + member.modelId + '  ' + pc.dim(result.reason));
+          const wasReady = viewEntry?.status === 'Ready';
+          if (wasReady && !includeAll && !checkReasoning) continue;
+          if (rateLimitedProviders.has(member.providerId)) {
+            transientCount++;
+            console.log(pc.yellow('skipped ') + '  ' + member.providerId + ' / ' + member.modelId + '  ' + pc.dim('provider rate-limited earlier in this run'));
+            continue;
+          }
+          const foundProvider = providers.find(item => item.id === member.providerId);
+          const foundModel = foundProvider?.models.find(item => item.id === member.modelId);
+          const result = await verifyPoolMember(member, providers, controller.signal, {
+            resolveKey: resolveLocalProviderApiKey,
+            createModel: (provider, model, apiKey) => createLanguageModel({
+              npm: model.npm!, modelId: model.upstreamModelId,
+              apiKey, baseURL: model.apiBaseUrl, providerId: provider.id,
+              authType: provider.authType, oauthAccountId: provider.oauthAccountId,
+              providerData: provider.providerData,
+              headers: poolProviderHeaders(provider, model, `relay-pool-verify-${randomUUID()}`),
+              sessionId: `relay-pool-verify-${randomUUID()}`,
+              refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
+            }),
+            probe: (languageModel, sig) => probePoolModel(
+              languageModel,
+              sig,
+              20_000,
+              traceProbeFailure(member.providerId + '/' + member.modelId + ' probe'),
+            ),
+            probeEffort: checkReasoning && foundProvider && foundModel
+              ? (languageModel, level) => probePoolEffort(
+                languageModel,
+                effortProviderOptions(foundModel.npm!, level, foundModel.upstreamModelId, {
+                  ...foundModel, providerId: foundProvider.id, apiBaseUrl: foundModel.apiBaseUrl,
+                }) as never,
+                controller.signal,
+                20_000,
+                traceProbeFailure(member.providerId + '/' + member.modelId + ' effort ' + level),
+              )
+              : undefined,
+          });
+          if (result.status === 'verified') {
+            verifiedCount++;
+            const index = receipts.findIndex(receipt =>
+              receipt.member.providerId === member.providerId && receipt.member.modelId === member.modelId);
+            if (index === -1) receipts.push(result.receipt);
+            else receipts[index] = result.receipt;
+            await clearDisabledPoolMember(member, result.receipt.endpointRevision);
+            console.log(pc.green('verified') + '  ' + member.providerId + ' / ' + member.modelId);
+          } else {
+            const failure = result.poolFailure;
+            const rateLimited = failure?.kind === 'rate-limit' || failure?.kind === 'quota';
+            const isTransient = rateLimited || failure?.kind === 'transient' || result.reason === 'probe-timeout';
+            if (rateLimited) rateLimitedProviders.add(member.providerId);
+            let markedDisabled = false;
+            let disabledNote: string | undefined;
+            if (failure?.kind === 'disabled' || failure?.kind === 'missing') {
+              const recorded = await recordTestPoolFailure(member, providers, failure);
+              markedDisabled = recorded.disabled;
+              disabledNote = recorded.note ?? failure.note;
+            }
+            // Keep existing Ready receipts intact when --all hits a transient 429/5xx/timeout.
+            if (!wasReady || !isTransient) {
+              for (let i = receipts.length - 1; i >= 0; i--) {
+                if (receipts[i].member.providerId === member.providerId && receipts[i].member.modelId === member.modelId) receipts.splice(i, 1);
+              }
+            }
+            if (markedDisabled) {
+              disabledCount++;
+              failed++;
+              console.log(pc.red('disabled') + '  ' + member.providerId + ' / ' + member.modelId + '  ' + pc.dim(disabledNote ?? result.reason));
+            } else if (isTransient) {
+              transientCount++;
+              failed++;
+              console.log(pc.yellow('transient') + '  ' + member.providerId + ' / ' + member.modelId + '  ' + pc.dim(result.reason + (wasReady ? ' (existing receipt kept)' : '')));
+            } else {
+              failed++;
+              console.log(pc.yellow('skipped ') + '  ' + member.providerId + ' / ' + member.modelId + '  ' + pc.dim(result.reason));
+            }
+          }
         }
+      } finally {
+        process.off('SIGINT', onSignal);
+        process.off('SIGTERM', onSignal);
       }
       const checked = validPoolReceipts(receipts);
       if (checked.discarded > 0) {
         console.log(pc.yellow('Discarded ' + checked.discarded + ' invalid or duplicate receipt(s).'));
       }
       savePreferences({ freePool: parseFreePool({ ...pool, receipts: checked.receipts }) });
+      const parts = [`${verifiedCount} verified`];
+      if (transientCount > 0) parts.push(`${transientCount} temporary/rate-limited`);
+      if (disabledCount > 0) parts.push(`${disabledCount} disabled`);
+      if (unavailableCount > 0) parts.push(`${unavailableCount} unavailable`);
+      console.log(pc.dim(`Summary: ${parts.join(' · ')}.`));
+      if (disabledCount > 0 || unavailableCount > 0) {
+        const cleanFlags = [disabledCount > 0 ? '--disabled' : '', unavailableCount > 0 ? '--unavailable' : ''].filter(Boolean).join(' ');
+        console.log(pc.dim(`To remove dead members, preview with: relay-ai pool clean ${cleanFlags} --dry-run`));
+      }
       console.log(pc.dim('Saved Test results stay valid until the endpoint changes. Membership was not changed.'));
       return failed === pool.members.length ? 1 : 0;
     }
     let next;
     if ((action === 'add' || action === 'remove') && args.length === 3) {
       const member = { providerId: first!, modelId: second! };
+      if (action === 'remove') {
+        const providers = await fetchProviderCatalog().catch(() => []);
+        await clearPoolMemberHealth(member, providers, pool.receipts);
+      }
       next = action === 'add' ? addFreePoolMember(pool, member) : removeFreePoolMember(pool, member);
     } else if ((action === 'enable' || action === 'disable') && args.length === 1) {
       next = parseFreePool({ ...pool, enabled: action === 'enable' });

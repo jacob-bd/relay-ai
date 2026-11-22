@@ -20,6 +20,7 @@ import {
   type OpenAiRequest,
 } from '../openai-adapter.js';
 import { sendJson, readBody } from '../http-utils.js';
+import { ANTHROPIC_SSE_PING, GENERIC_SSE_KEEPALIVE, startPoolSseKeepalive } from '../pool/keepalive.js';
 import { relayAnthropicMessages } from '../upstream-forward.js';
 import { resolveProviderCredential } from '../env.js';
 import { oauthAuthRef } from '../registry/import-build.js';
@@ -414,10 +415,14 @@ async function serveAnthropicPool(
 
   const abort = new AbortController();
   res.once('close', () => { if (!res.writableFinished) abort.abort(); });
+  const keepalive = body.stream === true
+    ? startPoolSseKeepalive(res, { frame: ANTHROPIC_SSE_PING })
+    : undefined;
 
   try {
     const sessionId = extractConversationId(req.headers, body);
     const result = await pool.runtime.serve(body, chunk => {
+      keepalive?.stop();
       if (res.destroyed) throw new Error('Client disconnected');
       if (!res.headersSent) {
         res.writeHead(200, {
@@ -428,6 +433,7 @@ async function serveAnthropicPool(
       }
       res.write(chunk);
     }, abort.signal, sessionId);
+    keepalive?.stop();
 
     if (result.ok) {
       if (result.message) sendJson(res, 200, result.message);
@@ -436,22 +442,33 @@ async function serveAnthropicPool(
     }
 
     plog(`pool error status=${result.status} committed=${result.committed}: ${result.error.message}`);
-    if (result.committed || res.headersSent) {
+    if (result.committed) {
       if (!res.writableEnded) res.end();
+      return;
+    }
+    if (res.headersSent) {
+      if (!res.destroyed && !res.writableEnded) {
+        res.write(`event: error\ndata: ${JSON.stringify({ type: 'error', error: result.error })}\n\n`);
+        res.end();
+      }
       return;
     }
     if (!res.destroyed) {
       sendJson(res, result.status, { type: 'error', error: result.error });
     }
   } catch (error) {
+    keepalive?.stop();
     const message = error instanceof Error ? error.message : String(error);
     plog(`pool failure: ${message}`);
     if (res.destroyed || res.writableEnded) return;
     if (!res.headersSent) {
       sendJson(res, 502, { type: 'error', error: { type: anthropicErrorType(502), message } });
     } else {
+      res.write(`event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: anthropicErrorType(502), message } })}\n\n`);
       res.end();
     }
+  } finally {
+    keepalive?.stop();
   }
 }
 
@@ -467,7 +484,14 @@ async function serveOpenAiPool(
   if (!pool) return;
   const sessionId = extractConversationId(req.headers, body);
   const responseModelId = String(body.model ?? poolCatalogId(options));
-  plog(() => `openai-chat-completions pool stream=${body.stream === true}`);
+  const isStream = body.stream === true;
+  plog(() => `openai-chat-completions pool stream=${isStream}`);
+  const abort = new AbortController();
+  res.once('close', () => { if (!res.writableFinished) abort.abort(); });
+  const keepalive = isStream
+    ? startPoolSseKeepalive(res, { frame: GENERIC_SSE_KEEPALIVE })
+    : undefined;
+  let contentCommitted = false;
   try {
     // Loaded lazily: the ordinary server catalog must not pull in Core transports.
     const [{ createRelayModel }, { RELAY_POOL_ROUTE_ID }] = await Promise.all([
@@ -476,25 +500,42 @@ async function serveOpenAiPool(
     ]);
     const languageModel = await createRelayModel(RELAY_POOL_ROUTE_ID, { sessionId, onDebug: plog });
     const params = translateOpenAiRequest(body as unknown as OpenAiRequest);
-    if (body.stream === true) {
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      });
-      await streamOpenAiResponse(languageModel, params, responseModelId, chunk => res.write(chunk), plog);
-      res.end();
+    if (isStream) {
+      await streamOpenAiResponse(languageModel, params, responseModelId, chunk => {
+        keepalive?.stop();
+        contentCommitted = true;
+        if (res.destroyed) throw new Error('Client disconnected');
+        if (!res.headersSent) {
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          });
+        }
+        res.write(chunk);
+      }, plog, abort.signal);
+      keepalive?.stop();
+      if (!res.writableEnded) res.end();
     } else {
       const response = await generateOpenAiResponse(languageModel, params, responseModelId);
       sendJson(res, 200, response);
     }
   } catch (err) {
+    keepalive?.stop();
     const message = formatUpstreamError(err);
     plog(`openai pool error: ${message}`);
+    if (res.destroyed || res.writableEnded) return;
     if (!res.headersSent) {
       const status = upstreamHttpStatus(err, message);
       sendJson(res, status === 500 ? 502 : status, { error: { message } });
-    } else res.end();
+    } else {
+      if (!contentCommitted) {
+        res.write(`data: ${JSON.stringify({ error: { message, type: 'server_error' } })}\n\ndata: [DONE]\n\n`);
+      }
+      res.end();
+    }
+  } finally {
+    keepalive?.stop();
   }
 }
 

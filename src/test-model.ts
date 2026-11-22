@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { TEST_MAX_OUTPUT_TOKENS } from './pool/probe.js';
+import { poolFailure } from './pool/errors.js';
 import { streamText, tool, jsonSchema } from 'ai';
 import { createRelayModel } from './core/model.js';
 import { loadRegistry } from './registry/io.js';
@@ -169,7 +170,12 @@ export async function checkContextWindow(
 }
 
 /** One bounded inference request, not a model-list/credential-storage check. */
-export async function testModel(providerId: string, modelId: string, signal?: AbortSignal, opts?: { withoutTools?: boolean }): Promise<any> {
+export async function testModel(
+  providerId: string,
+  modelId: string,
+  signal?: AbortSignal,
+  opts?: { withoutTools?: boolean; autoToolChoice?: boolean },
+): Promise<any> {
   const provider = loadRegistry().providers.find(p => p.id === providerId);
   if (!provider?.enabled || !getProviderModels(provider).some(m => m.id === modelId)) {
     return { ok: false, error: 'Model is no longer available. Refresh this provider.' };
@@ -180,11 +186,30 @@ export async function testModel(providerId: string, modelId: string, signal?: Ab
   try {
     const model = await createRelayModel(`${providerId}::${modelId}`, { sessionId: `relay-test-${randomUUID()}` });
     abortSignal.throwIfAborted();
-    const result = streamText({ model, prompt: opts?.withoutTools ? 'Say OK.' : 'Say OK, then call relay_pool_probe with value "ok".', maxOutputTokens: TEST_MAX_OUTPUT_TOKENS,
-      ...(opts?.withoutTools ? {} : { tools: { relay_pool_probe: tool({ description: 'Harmless capability check; never executed.',
-        inputSchema: jsonSchema<{ value: string }>({ type: 'object', properties: { value: { type: 'string', enum: ['ok'] } }, required: ['value'], additionalProperties: false }),
-      }) } }),
-      maxRetries: 0, abortSignal, onError: () => {} });
+    const result = streamText({
+      model,
+      prompt: opts?.withoutTools
+        ? 'Say OK.'
+        : 'Call relay_pool_probe with value "ok". Do not perform any other action.',
+      maxOutputTokens: TEST_MAX_OUTPUT_TOKENS,
+      ...(opts?.withoutTools ? {} : {
+        ...(opts?.autoToolChoice ? {} : { toolChoice: 'required' as const }),
+        tools: {
+          relay_pool_probe: tool({
+            description: 'Harmless capability check; never executed.',
+            inputSchema: jsonSchema<{ value: string }>({
+              type: 'object',
+              properties: { value: { type: 'string', enum: ['ok'] } },
+              required: ['value'],
+              additionalProperties: false,
+            }),
+          }),
+        },
+      }),
+      maxRetries: 0,
+      abortSignal,
+      onError: () => {},
+    });
     // Same as probeModel / pool sdk-route: cancel can reject these without anyone awaiting them.
     for (const promise of [result.text, result.toolCalls, result.toolResults, result.finishReason, result.usage, result.response]) {
       Promise.resolve(promise).catch(() => {});
@@ -210,9 +235,15 @@ export async function testModel(providerId: string, modelId: string, signal?: Ab
     rememberChatResult(providerId, modelId, true);
     return { ok: true, latencyMs, notChat: false, toolsPassed };
   } catch (error) {
+    const errTxt = errorText(error);
+    // Some OpenAI-compatible servers (e.g. vLLM / NIM) reject tool_choice="required" while still supporting tools in auto mode.
+    if (!opts?.withoutTools && !opts?.autoToolChoice && !abortSignal.aborted
+      && /tool_choice|auto tool choice|choice.*required|required.*tool/i.test(errTxt)) {
+      return testModel(providerId, modelId, signal, { autoToolChoice: true });
+    }
     // Some servers (Ollama) refuse the tool part for models that chat fine but cannot call tools.
     // That is a capability, not a failure: retry as a plain chat and report tools as not supported.
-    if (!opts?.withoutTools && !abortSignal.aborted && /does not support tools|tools? (?:are|is) not supported/i.test(errorText(error))) {
+    if (!opts?.withoutTools && !abortSignal.aborted && /does not support tools|tools? (?:are|is) not supported|tool calling/i.test(errTxt)) {
       return testModel(providerId, modelId, signal, { withoutTools: true });
     }
     if (!abortSignal.aborted && isNotChatRefusal(error)) {
@@ -222,7 +253,10 @@ export async function testModel(providerId: string, modelId: string, signal?: Ab
     // Never return raw upstream errors: they can contain keys, headers or request bodies.
     const status = upstreamHttpStatus(error, '');
     const text = errorText(error);
+    const classified = abortSignal.aborted ? undefined : poolFailure(error);
     const message = abortSignal.aborted ? 'No response within 30 seconds, or the test was cancelled.'
+      : classified?.kind === 'disabled' && classified.note
+        ? `Model unavailable: ${classified.note}.`
       : status === 404 && /unsupported_path|not an? (?:\w+ )?surface/i.test(text)
         ? "This provider's endpoint doesn't serve this model. Try the same model on your other provider for this gateway (e.g. the OpenAI-style one)."
       : status === 403 && /subscription .* does not include model/i.test(text) ? "Your plan doesn't include this model."
@@ -233,6 +267,11 @@ export async function testModel(providerId: string, modelId: string, signal?: Ab
     // Rate limits, quota, timeouts and server/network errors say nothing about the model itself.
     const transient = abortSignal.aborted || status === 429 || status === 402
       || status === undefined || (typeof status === 'number' && status >= 500);
-    return { ok: false, error: message, ...(transient ? { transient: true } : {}) };
+    return {
+      ok: false,
+      error: message,
+      ...(transient ? { transient: true } : {}),
+      ...(classified ? { poolFailure: { kind: classified.kind, ...(classified.note ? { note: classified.note } : {}), ...(classified.status ? { status: classified.status } : {}) } } : {}),
+    };
   }
 }

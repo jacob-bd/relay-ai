@@ -1,4 +1,5 @@
 import { FREE_POOL_MODEL_ID, type CodexPoolRuntime } from './pool/codex-runtime.js';
+import { GENERIC_SSE_KEEPALIVE, startPoolSseKeepalive, startPoolWsKeepalive } from './pool/keepalive.js';
 // Local Responses API proxy for Codex (Tier 2 registry models).
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -1038,18 +1039,26 @@ export async function startCodexProxy(
           }
           const abort = new AbortController();
           res.once('close', () => { if (!res.writableFinished) abort.abort(); });
+          const keepalive = body.stream === true
+            ? startPoolSseKeepalive(res, { frame: GENERIC_SSE_KEEPALIVE })
+            : undefined;
           try {
             const response = await opts.pool.respond(req.headers, body, abort.signal, chunk => {
+              keepalive?.stop();
               if (res.destroyed) throw new Error('Client disconnected');
               if (!res.headersSent) res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
               res.write(chunk);
             });
+            keepalive?.stop();
             if (body.stream) res.end();
             else sendJson(res, 200, response);
           } catch (poolError) {
+            keepalive?.stop();
             if (debug) log(`pool request failed: ${poolErrorDetail(poolError) ?? (poolError instanceof Error ? poolError.message : 'unknown')}`);
             if (!res.headersSent) sendJson(res, 503, { error: { message: 'Free pool could not complete this request safely', type: 'api_error' } });
             else if (!res.writableEnded) { writeResponsesErrorStream(modelId, 'Free pool request failed', chunk => res.write(chunk), 503); res.end(); }
+          } finally {
+            keepalive?.stop();
           }
           return;
         }
@@ -1702,17 +1711,28 @@ export async function startCodexProxy(
             const poolAbort = new AbortController();
             const abortPool = () => poolAbort.abort();
             socket.once('close', abortPool);
+            const wsKeepalive = startPoolWsKeepalive(() => {
+              if (socketClosing || socket.destroyed) return false;
+              socket.write(wsPingFrame());
+              return true;
+            });
             try {
-              const response = await opts.pool.respond(req.headers, body, poolAbort.signal, sendWsEvent);
+              const response = await opts.pool.respond(req.headers, body, poolAbort.signal, chunk => {
+                wsKeepalive.stop();
+                sendWsEvent(chunk);
+              });
+              wsKeepalive.stop();
               if (body.stream !== true && !socketClosing && !socket.destroyed) {
                 sendWsEvent('event: response.completed\ndata: ' + JSON.stringify({ type: 'response.completed', response }) + '\n\n');
               }
             } catch (err) {
+              wsKeepalive.stop();
               if (debug) log('WS pool error: ' + (err instanceof Error ? err.message : String(err)));
               if (!socketClosing && !socket.destroyed) {
                 writeResponsesErrorStream(modelId, 'Free pool request failed', sendWsEvent, 503);
               }
             } finally {
+              wsKeepalive.stop();
               poolActive = false;
               socket.off('close', abortPool);
             }
