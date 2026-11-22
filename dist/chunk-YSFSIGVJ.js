@@ -3,7 +3,7 @@ import {
   extractApiKey,
   readBody,
   sendJson
-} from "./chunk-PQ4VCNTJ.js";
+} from "./chunk-JZ53BAL4.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -14,9 +14,9 @@ import {
   filterModelsByAvailability,
   refreshProviderModels,
   validateClinePassApiKey
-} from "./chunk-MUL56HX6.js";
+} from "./chunk-7CHQ4LKN.js";
 import {
-  MAX_POOL_ATTEMPTS,
+  DEFAULT_POOL_LIMITS,
   POOL_MAX_TOOLS,
   dispatchFreePool,
   formatCodexModelLabel,
@@ -30,7 +30,7 @@ import {
   requestFingerprint,
   sdkPoolRoute,
   translatedEffortClaim
-} from "./chunk-6PQQ4LAX.js";
+} from "./chunk-TFZ4IHSN.js";
 import {
   PoolHealthStore,
   describePoolFailure,
@@ -51,7 +51,7 @@ import {
   resolveLocalProviderApiKey,
   retryPoolFailure,
   toOAuthRegistryId
-} from "./chunk-VX6SGCM7.js";
+} from "./chunk-SDRVP6UH.js";
 import {
   SubagentRouteRegistry,
   anthropicEffortFromRequest,
@@ -61,7 +61,7 @@ import {
   streamAnthropicResponse,
   translateRequest,
   writeAnthropicStream
-} from "./chunk-7NWPPHUY.js";
+} from "./chunk-ZYQ7HBAF.js";
 import {
   anthropicErrorType,
   formatUpstreamError,
@@ -124,7 +124,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-YXREHFK3.js";
+} from "./chunk-2UFMXYWV.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -167,7 +167,7 @@ import {
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth,
   tokensToStoredCredential
-} from "./chunk-7RSJEDK4.js";
+} from "./chunk-YFZNEGUV.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -2114,14 +2114,7 @@ async function serveClaudePoolRequest(options, state) {
   }
 }
 var ClaudePoolRuntime = class {
-  constructor(pool, prepare, limits = {
-    attempts: MAX_POOL_ATTEMPTS,
-    firstContentMs: 2e4,
-    idleMs: 2e4,
-    totalMs: 6e4,
-    bufferBytes: 65536,
-    cleanupMs: 1e3
-  }) {
+  constructor(pool, prepare, limits = DEFAULT_POOL_LIMITS) {
     this.pool = pool;
     this.prepare = prepare;
     this.limits = limits;
@@ -2194,6 +2187,108 @@ var ClaudePoolRuntime = class {
     return fresh;
   }
 };
+
+// src/pool/keepalive.ts
+var DEFAULT_KEEPALIVE_DELAY_MS = 1500;
+var DEFAULT_KEEPALIVE_INTERVAL_MS = 4e3;
+var ANTHROPIC_SSE_PING = 'event: ping\ndata: {"type":"ping"}\n\n';
+var GENERIC_SSE_KEEPALIVE = ": keepalive\n\n";
+function startPoolSseKeepalive(res, options = {}) {
+  const frame = options.frame ?? GENERIC_SSE_KEEPALIVE;
+  const delayMs = Number.isFinite(options.delayMs) && (options.delayMs ?? 0) > 0 ? Math.floor(options.delayMs) : DEFAULT_KEEPALIVE_DELAY_MS;
+  const intervalMs = Number.isFinite(options.intervalMs) && (options.intervalMs ?? 0) > 0 ? Math.floor(options.intervalMs) : DEFAULT_KEEPALIVE_INTERVAL_MS;
+  const sseHeaders = {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    ...options.headers
+  };
+  let stopped = false;
+  let sent = false;
+  let delayTimer;
+  let intervalTimer;
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    res.off("close", stop);
+    if (delayTimer) clearTimeout(delayTimer);
+    if (intervalTimer) clearInterval(intervalTimer);
+    delayTimer = void 0;
+    intervalTimer = void 0;
+  };
+  const tick = () => {
+    if (stopped || res.destroyed || res.writableEnded || !res.writable) {
+      stop();
+      return;
+    }
+    if (res.writableNeedDrain) return;
+    try {
+      if (!res.headersSent) {
+        res.writeHead(200, sseHeaders);
+      }
+      res.write(frame);
+      sent = true;
+    } catch {
+      stop();
+    }
+  };
+  res.once("close", stop);
+  delayTimer = setTimeout(() => {
+    delayTimer = void 0;
+    tick();
+    if (!stopped) {
+      intervalTimer = setInterval(tick, intervalMs);
+      intervalTimer.unref?.();
+    }
+  }, delayMs);
+  delayTimer.unref?.();
+  return {
+    stop,
+    get sent() {
+      return sent;
+    }
+  };
+}
+function startPoolWsKeepalive(sendPing, options = {}) {
+  const delayMs = Number.isFinite(options.delayMs) && (options.delayMs ?? 0) > 0 ? Math.floor(options.delayMs) : DEFAULT_KEEPALIVE_DELAY_MS;
+  const intervalMs = Number.isFinite(options.intervalMs) && (options.intervalMs ?? 0) > 0 ? Math.floor(options.intervalMs) : DEFAULT_KEEPALIVE_INTERVAL_MS;
+  let stopped = false;
+  let sent = false;
+  let delayTimer;
+  let intervalTimer;
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    if (delayTimer) clearTimeout(delayTimer);
+    if (intervalTimer) clearInterval(intervalTimer);
+    delayTimer = void 0;
+    intervalTimer = void 0;
+  };
+  const tick = () => {
+    if (stopped) return;
+    try {
+      if (sendPing()) sent = true;
+      else stop();
+    } catch {
+      stop();
+    }
+  };
+  delayTimer = setTimeout(() => {
+    delayTimer = void 0;
+    tick();
+    if (!stopped) {
+      intervalTimer = setInterval(tick, intervalMs);
+      intervalTimer.unref?.();
+    }
+  }, delayMs);
+  delayTimer.unref?.();
+  return {
+    stop,
+    get sent() {
+      return sent;
+    }
+  };
+}
 
 // src/proxy.ts
 import { createServer } from "http";
@@ -3137,9 +3232,11 @@ function startProxyCatalog(routes, defaultAliasId, debug = false, options = {}) 
         res.once("close", () => {
           if (!res.writableFinished) abort.abort();
         });
+        const keepalive = clientWantsStream ? startPoolSseKeepalive(res, { frame: ANTHROPIC_SSE_PING }) : void 0;
         try {
           const sessionId = extractConversationId(req.headers, anthropicBody);
           const result = await options.pool.runtime.serve(anthropicBody, (chunk) => {
+            keepalive?.stop();
             if (res.destroyed) throw new Error("Client disconnected");
             if (!res.headersSent) {
               res.writeHead(200, {
@@ -3150,18 +3247,36 @@ function startProxyCatalog(routes, defaultAliasId, debug = false, options = {}) 
             }
             res.write(chunk);
           }, abort.signal, sessionId, (line) => plog(() => line));
+          keepalive?.stop();
           if (result.ok) {
             if (result.message) sendJson(res, 200, result.message);
             else res.end();
           } else if (result.committed) {
-            res.end();
+            if (!res.writableEnded) res.end();
+          } else if (res.headersSent) {
+            if (!res.destroyed && !res.writableEnded) {
+              res.write(`event: error
+data: ${JSON.stringify({ type: "error", error: result.error })}
+
+`);
+              res.end();
+            }
           } else {
             anthropicError(res, result.status, result.error.message);
           }
         } catch (error) {
+          keepalive?.stop();
           const message = error instanceof Error ? error.message : String(error);
           if (!res.headersSent) anthropicError(res, 502, message);
-          else if (!res.writableEnded) res.end();
+          else if (!res.destroyed && !res.writableEnded) {
+            res.write(`event: error
+data: ${JSON.stringify({ type: "error", error: { type: "api_error", message } })}
+
+`);
+            res.end();
+          }
+        } finally {
+          keepalive?.stop();
         }
         return;
       }
@@ -3622,14 +3737,14 @@ function servableClaudeMember(pool, providers, member, now) {
   if (!receipt || !receipt.billingSafe || !receipt.tools || !receipt.targets.includes("claude")) return void 0;
   return receipt;
 }
-function prepareClaudeAutoPool(prefs, providers, now = Date.now()) {
+function prepareClaudeAutoPool(prefs, providers, now = Date.now(), options = {}) {
   let pool;
   try {
     pool = parseFreePool(prefs?.freePool);
   } catch {
     return void 0;
   }
-  if (pool.enabled !== true || pool.members.length === 0) return void 0;
+  if (!options.force && pool.enabled !== true || pool.members.length === 0) return void 0;
   const entry = poolCatalogEntry(pool, pool.receipts, "claude", now);
   if (!entry) return void 0;
   if (!pool.members.some((member) => servableClaudeMember(pool, providers, member, now))) return void 0;
@@ -4015,8 +4130,8 @@ async function generateOpenAiResponse(model, params, responseModelId) {
     usage: toOpenAiUsage(result.usage)
   };
 }
-async function streamOpenAiResponse(model, params, responseModelId, onChunk, log7) {
-  const { stream } = streamText({ model, ...params });
+async function streamOpenAiResponse(model, params, responseModelId, onChunk, log7, abortSignal) {
+  const { stream } = streamText({ model, ...params, ...abortSignal ? { abortSignal } : {} });
   const baseData = {
     id: `chatcmpl-${Date.now()}`,
     object: "chat.completion.chunk",
@@ -4356,9 +4471,11 @@ async function serveAnthropicPool(req, res, options, body, plog) {
   res.once("close", () => {
     if (!res.writableFinished) abort.abort();
   });
+  const keepalive = body.stream === true ? startPoolSseKeepalive(res, { frame: ANTHROPIC_SSE_PING }) : void 0;
   try {
     const sessionId = extractConversationId(req.headers, body);
     const result = await pool.runtime.serve(body, (chunk) => {
+      keepalive?.stop();
       if (res.destroyed) throw new Error("Client disconnected");
       if (!res.headersSent) {
         res.writeHead(200, {
@@ -4369,28 +4486,46 @@ async function serveAnthropicPool(req, res, options, body, plog) {
       }
       res.write(chunk);
     }, abort.signal, sessionId);
+    keepalive?.stop();
     if (result.ok) {
       if (result.message) sendJson(res, 200, result.message);
       else res.end();
       return;
     }
     plog(`pool error status=${result.status} committed=${result.committed}: ${result.error.message}`);
-    if (result.committed || res.headersSent) {
+    if (result.committed) {
       if (!res.writableEnded) res.end();
+      return;
+    }
+    if (res.headersSent) {
+      if (!res.destroyed && !res.writableEnded) {
+        res.write(`event: error
+data: ${JSON.stringify({ type: "error", error: result.error })}
+
+`);
+        res.end();
+      }
       return;
     }
     if (!res.destroyed) {
       sendJson(res, result.status, { type: "error", error: result.error });
     }
   } catch (error) {
+    keepalive?.stop();
     const message = error instanceof Error ? error.message : String(error);
     plog(`pool failure: ${message}`);
     if (res.destroyed || res.writableEnded) return;
     if (!res.headersSent) {
       sendJson(res, 502, { type: "error", error: { type: anthropicErrorType(502), message } });
     } else {
+      res.write(`event: error
+data: ${JSON.stringify({ type: "error", error: { type: anthropicErrorType(502), message } })}
+
+`);
       res.end();
     }
+  } finally {
+    keepalive?.stop();
   }
 }
 async function serveOpenAiPool(req, res, options, body, plog) {
@@ -4398,33 +4533,61 @@ async function serveOpenAiPool(req, res, options, body, plog) {
   if (!pool) return;
   const sessionId = extractConversationId(req.headers, body);
   const responseModelId = String(body.model ?? poolCatalogId(options));
-  plog(() => `openai-chat-completions pool stream=${body.stream === true}`);
+  const isStream = body.stream === true;
+  plog(() => `openai-chat-completions pool stream=${isStream}`);
+  const abort = new AbortController();
+  res.once("close", () => {
+    if (!res.writableFinished) abort.abort();
+  });
+  const keepalive = isStream ? startPoolSseKeepalive(res, { frame: GENERIC_SSE_KEEPALIVE }) : void 0;
+  let contentCommitted = false;
   try {
     const [{ createRelayModel }, { RELAY_POOL_ROUTE_ID }] = await Promise.all([
-      import("./model-PXSWFL5Y.js"),
-      import("./pool-model-RU4YL5NH.js")
+      import("./model-24VYMZUU.js"),
+      import("./pool-model-6KDBZJHQ.js")
     ]);
     const languageModel = await createRelayModel(RELAY_POOL_ROUTE_ID, { sessionId, onDebug: plog });
     const params = translateOpenAiRequest(body);
-    if (body.stream === true) {
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive"
-      });
-      await streamOpenAiResponse(languageModel, params, responseModelId, (chunk) => res.write(chunk), plog);
-      res.end();
+    if (isStream) {
+      await streamOpenAiResponse(languageModel, params, responseModelId, (chunk) => {
+        keepalive?.stop();
+        contentCommitted = true;
+        if (res.destroyed) throw new Error("Client disconnected");
+        if (!res.headersSent) {
+          res.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive"
+          });
+        }
+        res.write(chunk);
+      }, plog, abort.signal);
+      keepalive?.stop();
+      if (!res.writableEnded) res.end();
     } else {
       const response = await generateOpenAiResponse(languageModel, params, responseModelId);
       sendJson(res, 200, response);
     }
   } catch (err) {
+    keepalive?.stop();
     const message = formatUpstreamError(err);
     plog(`openai pool error: ${message}`);
+    if (res.destroyed || res.writableEnded) return;
     if (!res.headersSent) {
       const status = upstreamHttpStatus(err, message);
       sendJson(res, status === 500 ? 502 : status, { error: { message } });
-    } else res.end();
+    } else {
+      if (!contentCommitted) {
+        res.write(`data: ${JSON.stringify({ error: { message, type: "server_error" } })}
+
+data: [DONE]
+
+`);
+      }
+      res.end();
+    }
+  } finally {
+    keepalive?.stop();
   }
 }
 async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) {
@@ -7437,6 +7600,9 @@ export {
   findBinaryOnPath,
   CLAUDE_POOL_MODEL_ID,
   ClaudePoolRuntime,
+  GENERIC_SSE_KEEPALIVE,
+  startPoolSseKeepalive,
+  startPoolWsKeepalive,
   formatAnthropicModelEntry,
   formatAnthropicModelList,
   gatewayProviderLabel,
@@ -7505,4 +7671,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-VL35VIGE.js.map
+//# sourceMappingURL=chunk-YSFSIGVJ.js.map

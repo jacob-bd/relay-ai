@@ -2,6 +2,7 @@
 import {
   CLAUDE_POOL_MODEL_ID,
   ClaudePoolRuntime,
+  GENERIC_SSE_KEEPALIVE,
   addFavorite,
   addProviderFromTemplate,
   aliasModelId,
@@ -68,19 +69,21 @@ import {
   relayOutro,
   removeFavorite,
   runServerCommand,
+  startPoolSseKeepalive,
+  startPoolWsKeepalive,
   startProxy,
   startProxyCatalog,
   startServer,
   supportsClaudeTransparentMode,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-VL35VIGE.js";
+} from "./chunk-YSFSIGVJ.js";
 import {
   extractApiKey,
   readBody,
   sendJson,
   warnDisabledPoolMembers
-} from "./chunk-PQ4VCNTJ.js";
+} from "./chunk-JZ53BAL4.js";
 import {
   printUiUrlLast
 } from "./chunk-4BVKM3FX.js";
@@ -108,7 +111,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-MUL56HX6.js";
+} from "./chunk-7CHQ4LKN.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -120,6 +123,8 @@ import {
   POOL_MAX_TOOLS,
   PREVIEW_PROXY_PORT,
   PoolAttemptError,
+  RELAY_POOL_MODEL_ID,
+  RELAY_POOL_PROVIDER_ID,
   appendCompactionInstruction,
   buildAppCatalogFile,
   buildCatalogFile,
@@ -131,6 +136,7 @@ import {
   codexPoolCatalogModel,
   collectSummaryText,
   conversationKey,
+  createRelayPoolModel,
   decodeCompactionContent,
   dispatchFreePool,
   estimateInputItemChars,
@@ -142,6 +148,7 @@ import {
   generateResponsesResponse,
   lazyPoolRoute,
   liftAdditionalToolsInput,
+  loadPoolState,
   makeCompactionItem,
   newResponseId,
   noteModelFamily,
@@ -158,13 +165,14 @@ import {
   renderMultiAgentV2Feature,
   sdkPoolRoute,
   serializeCatalog,
+  servableMembers,
   streamCompactionResponse,
   streamResponsesResponse,
   supportsMultiAgentV2,
   translateResponsesRequest,
   writeResponsesCreated,
   writeResponsesErrorStream
-} from "./chunk-6PQQ4LAX.js";
+} from "./chunk-TFZ4IHSN.js";
 import {
   OPENCODE_SESSION_HEADER,
   PoolHealthStore,
@@ -203,19 +211,19 @@ import {
   retryPoolFailure,
   routableModelsForTarget,
   toOAuthRegistryId
-} from "./chunk-VX6SGCM7.js";
+} from "./chunk-SDRVP6UH.js";
 import {
   effectiveProviderBaseUrl,
   isLikelyPlaceholderKey,
   resolveProviderTemplate,
   resolveRefreshCredential,
   syntheticTemplate
-} from "./chunk-CFSNPQWS.js";
+} from "./chunk-XRM7HLAA.js";
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-YN5ZPJF3.js";
-import "./chunk-7NWPPHUY.js";
+} from "./chunk-KDJECC23.js";
+import "./chunk-ZYQ7HBAF.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -291,7 +299,7 @@ import {
   vertexModelDisplayName,
   withAnthropicThinkingDisplay,
   writeSecureLogLine
-} from "./chunk-YXREHFK3.js";
+} from "./chunk-2UFMXYWV.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -329,7 +337,7 @@ import {
   saveToCredentialStore,
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth
-} from "./chunk-7RSJEDK4.js";
+} from "./chunk-YFZNEGUV.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -3476,7 +3484,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-64LXO6XY.js");
+      const { testModel } = await import("./test-model-4XFYPCXV.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -5263,21 +5271,27 @@ async function startCodexProxy(routes, options = {}) {
           res.once("close", () => {
             if (!res.writableFinished) abort.abort();
           });
+          const keepalive = body.stream === true ? startPoolSseKeepalive(res, { frame: GENERIC_SSE_KEEPALIVE }) : void 0;
           try {
             const response = await opts.pool.respond(req.headers, body, abort.signal, (chunk) => {
+              keepalive?.stop();
               if (res.destroyed) throw new Error("Client disconnected");
               if (!res.headersSent) res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
               res.write(chunk);
             });
+            keepalive?.stop();
             if (body.stream) res.end();
             else sendJson(res, 200, response);
           } catch (poolError) {
+            keepalive?.stop();
             if (debug) log15(`pool request failed: ${poolErrorDetail(poolError) ?? (poolError instanceof Error ? poolError.message : "unknown")}`);
             if (!res.headersSent) sendJson(res, 503, { error: { message: "Free pool could not complete this request safely", type: "api_error" } });
             else if (!res.writableEnded) {
               writeResponsesErrorStream(modelId, "Free pool request failed", (chunk) => res.write(chunk), 503);
               res.end();
             }
+          } finally {
+            keepalive?.stop();
           }
           return;
         }
@@ -5922,17 +5936,28 @@ data: ${JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_reques
               const poolAbort = new AbortController();
               const abortPool = () => poolAbort.abort();
               socket.once("close", abortPool);
+              const wsKeepalive = startPoolWsKeepalive(() => {
+                if (socketClosing || socket.destroyed) return false;
+                socket.write(wsPingFrame());
+                return true;
+              });
               try {
-                const response = await opts.pool.respond(req.headers, body, poolAbort.signal, sendWsEvent);
+                const response = await opts.pool.respond(req.headers, body, poolAbort.signal, (chunk2) => {
+                  wsKeepalive.stop();
+                  sendWsEvent(chunk2);
+                });
+                wsKeepalive.stop();
                 if (body.stream !== true && !socketClosing && !socket.destroyed) {
                   sendWsEvent("event: response.completed\ndata: " + JSON.stringify({ type: "response.completed", response }) + "\n\n");
                 }
               } catch (err) {
+                wsKeepalive.stop();
                 if (debug) log15("WS pool error: " + (err instanceof Error ? err.message : String(err)));
                 if (!socketClosing && !socket.destroyed) {
                   writeResponsesErrorStream(modelId, "Free pool request failed", sendWsEvent, 503);
                 }
               } finally {
+                wsKeepalive.stop();
                 poolActive = false;
                 socket.off("close", abortPool);
               }
@@ -6345,8 +6370,8 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
 }
 
 // src/pool/additive.ts
-function additivePoolPreferences(prefs) {
-  if (prefs.freePool?.enabled !== true) return void 0;
+function additivePoolPreferences(prefs, options = {}) {
+  if (!options.force && prefs.freePool?.enabled !== true) return void 0;
   try {
     const pool = parseFreePool(prefs.freePool);
     return pool.members.length > 0 && pool.receipts.length > 0 ? pool : void 0;
@@ -7572,7 +7597,8 @@ async function runCodexCommand2(codexArgs, trace = false, launch = {}) {
       launch = { ...launch, pool: true, launchProvider: void 0, launchModel: void 0 };
     }
   }
-  if (launch.pool) {
+  const explicitMixedPool = Boolean(launch.pool && launch.codexLaunchMode === "mixed");
+  if (launch.pool && !explicitMixedPool) {
     const pool = parseFreePool(prefs.freePool);
     if (pool.members.length === 0) {
       console.error(pc6.red("No free pool members. Add one with: relay-ai pool add <provider-account> <model>"));
@@ -7687,7 +7713,7 @@ Error: ${launchPlan.error}
 `));
     return 1;
   }
-  const allowNonTty = !!(launchPlan.skip && launchPlan.target);
+  const allowNonTty = !!(launchPlan.skip && launchPlan.target) || explicitMixedPool;
   if (!configOnly) {
     const sessionCheck = checkSessionLock(isTty || allowNonTty);
     if (!sessionCheck.ok) {
@@ -7741,7 +7767,7 @@ Error: ${launchPlan.error}
     }
     return 0;
   }
-  const additivePool = additivePoolPreferences(prefs);
+  const additivePool = additivePoolPreferences(prefs, { force: explicitMixedPool });
   const additive = additivePool ? createAdditivePoolRuntime(additivePool, providersForPicker(catalog)) : void 0;
   if (additive && additivePool) await warnDisabledPoolMembers(providersForPicker(catalog), additivePool);
   const additivePoolRuntime = additive?.runtime;
@@ -7764,10 +7790,11 @@ Error: ${launchPlan.error}
     );
     p10.log.info("Edit with `relay-ai models`.");
   }
-  let startOnPool = false;
+  let startOnPool = explicitMixedPool;
   let activeProvider = compatible.find((lp) => lp.id === prefs.lastCodexProvider) ?? compatible[0];
   let selectedModel = activeProvider.models.find((m) => m.id === prefs.lastCodexModel) ?? activeProvider.models[0];
-  if (!configOnly && launchPlan.skip && launchPlan.target) {
+  if (startOnPool) {
+  } else if (!configOnly && launchPlan.skip && launchPlan.target) {
     const resolved = findProviderAndModel(compatible, launchPlan.target);
     if (!resolved) {
       p10.log.error(
@@ -8468,6 +8495,9 @@ async function startGeminiProxy(routes, debug = false) {
     plog(`Uncaught Exception: ${error.stack || error.message}`);
   };
   const getOrInitModel = async (route, sessionId) => {
+    if (route.providerId === RELAY_POOL_PROVIDER_ID) {
+      return createRelayPoolModel({ ...sessionId ? { sessionId } : {}, ignoreEnabled: true });
+    }
     const cacheKey = `${route.aliasId}\0${sessionId ?? ""}`;
     let m = models.get(cacheKey);
     if (!m) {
@@ -8502,6 +8532,7 @@ async function startGeminiProxy(routes, debug = false) {
   });
   let sessionRouteOverride = void 0;
   const server = createServer2(async (req, res) => {
+    let poolRequest = false;
     try {
       const url = req.url ?? "";
       plog(`${req.method} ${url}`);
@@ -8579,38 +8610,59 @@ Available: ${available}`, isStream);
         body.contents = sanitizeModelSwitchTurns(body.contents || []);
         const conversationId = extractConversationId(req.headers, body);
         const languageModel = await getOrInitModel(route, conversationId);
-        const requestHeaders = openCodeGoHeaders(
+        const isPoolRoute = route.providerId === RELAY_POOL_PROVIDER_ID;
+        poolRequest = isPoolRoute;
+        const requestHeaders = isPoolRoute ? void 0 : openCodeGoHeaders(
           route.providerId,
           route.baseURL,
           conversationId,
           route.headers
         );
-        const params = applyClaudeCodeOAuthIdentity(
+        const translated = translateGeminiRequest(body, {
+          maxTools: isPoolRoute ? void 0 : maxToolsForNpm(route.npm),
+          ...requestHeaders ? { requestHeaders } : {}
+        });
+        const params = isPoolRoute ? translated : applyClaudeCodeOAuthIdentity(
           { ...route, upstreamModelId: route.realModelId },
-          translateGeminiRequest(body, {
-            maxTools: maxToolsForNpm(route.npm),
-            ...requestHeaders ? { requestHeaders } : {}
-          })
+          translated
         );
-        const requestedThinkingLevel = typeof body?.generationConfig?.thinkingConfig?.thinkingLevel === "string" ? body.generationConfig.thinkingConfig.thinkingLevel.trim().toLowerCase() : "high";
-        params.providerOptions = deepMergeProviderOptions(
-          params.providerOptions,
-          deepMergeProviderOptions(
-            thinkingProviderOptions(route.npm || "@ai-sdk/openai-compatible"),
-            effortProviderOptions(route.npm || "@ai-sdk/openai-compatible", requestedThinkingLevel || "high", route.realModelId, route)
-          )
-        );
+        if (!isPoolRoute) {
+          const requestedThinkingLevel = typeof body?.generationConfig?.thinkingConfig?.thinkingLevel === "string" ? body.generationConfig.thinkingConfig.thinkingLevel.trim().toLowerCase() : "high";
+          params.providerOptions = deepMergeProviderOptions(
+            params.providerOptions,
+            deepMergeProviderOptions(
+              thinkingProviderOptions(route.npm || "@ai-sdk/openai-compatible"),
+              effortProviderOptions(route.npm || "@ai-sdk/openai-compatible", requestedThinkingLevel || "high", route.realModelId, route)
+            )
+          );
+        }
         plog(`Translated SDK params:
 ${JSON.stringify(params, null, 2)}`);
+        const abort = new AbortController();
+        res.once("close", () => {
+          if (!res.writableFinished) abort.abort();
+        });
         if (isStream) {
-          res.writeHead(200, {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive"
-          });
+          const ensureSseHeaders = () => {
+            if (!res.headersSent) {
+              res.writeHead(200, {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive"
+              });
+            }
+          };
+          const writeSseChunk = (payload) => {
+            ensureSseHeaders();
+            res.write(`data: ${JSON.stringify(payload)}
+
+`);
+          };
+          if (!isPoolRoute) ensureSseHeaders();
           plog("Starting streamText...");
           const { stream } = streamText({
             model: languageModel,
+            abortSignal: abort.signal,
             ...params
           });
           const toolCallBuffers = /* @__PURE__ */ new Map();
@@ -8627,9 +8679,7 @@ ${JSON.stringify(params, null, 2)}`);
 ` }] } }],
                 modelVersion: route.aliasId
               };
-              res.write(`data: ${JSON.stringify(chunk)}
-
-`);
+              writeSseChunk(chunk);
             }
             if (p17.type === "reasoning") {
               let text7 = p17.textDelta ?? p17.text ?? "";
@@ -8642,9 +8692,7 @@ ${JSON.stringify(params, null, 2)}`);
                 candidates: [{ content: { role: "model", parts: [{ text: text7 }] } }],
                 modelVersion: route.aliasId
               };
-              res.write(`data: ${JSON.stringify(chunk)}
-
-`);
+              writeSseChunk(chunk);
             } else if (p17.type === "text-delta") {
               let text7 = p17.textDelta ?? p17.text ?? "";
               if (isThinking) {
@@ -8663,11 +8711,8 @@ ${JSON.stringify(params, null, 2)}`);
                 }],
                 modelVersion: route.aliasId
               };
-              const data = `data: ${JSON.stringify(chunk)}
-
-`;
               plog(`Streaming text delta: ${p17.textDelta}`);
-              res.write(data);
+              writeSseChunk(chunk);
             } else if (p17.type === "tool-input-start") {
               toolCallBuffers.set(p17.toolCallId, { name: p17.toolName, json: "" });
             } else if (p17.type === "tool-input-delta") {
@@ -8689,9 +8734,7 @@ ${JSON.stringify(params, null, 2)}`);
                 }],
                 modelVersion: route.aliasId
               };
-              res.write(`data: ${JSON.stringify(chunk)}
-
-`);
+              writeSseChunk(chunk);
             } else if (p17.type === "finish") {
               const chunk = {
                 candidates: [{
@@ -8704,17 +8747,17 @@ ${JSON.stringify(params, null, 2)}`);
                 modelVersion: route.aliasId
               };
               plog(`Stream finish. Reason: ${p17.finishReason}`);
-              res.write(`data: ${JSON.stringify(chunk)}
-
-`);
+              writeSseChunk(chunk);
             }
           }
+          ensureSseHeaders();
           res.end();
           plog("Stream ended.");
         } else {
           plog("Starting generateText...");
           const result = await generateTextStreamingIfRequired({
             model: languageModel,
+            abortSignal: abort.signal,
             ...params
           });
           plog("generateText finished.");
@@ -8766,8 +8809,13 @@ ${JSON.stringify(response, null, 2)}`);
       if (debug) {
         console.error(`[Gemini Proxy] ${errMsg}`);
       }
+      if (res.destroyed || res.writableEnded) return;
       if (!res.headersSent) {
-        sendMockGeminiResponse(res, `\u26A0 ${errMsg}`, req.url?.includes("streamGenerateContent") ?? false);
+        if (poolRequest) {
+          sendJson(res, 502, { error: { code: 502, message: errMsg, status: "UNAVAILABLE" } });
+        } else {
+          sendMockGeminiResponse(res, `\u26A0 ${errMsg}`, req.url?.includes("streamGenerateContent") ?? false);
+        }
       } else {
         try {
           writeGeminiStreamText(res, `\u26A0 ${errMsg}`);
@@ -8974,6 +9022,7 @@ ${pc7.bold("Options:")}
   --trace      Write proxy debug logs to ~/.relay-ai/logs/ and show errors on exit
   --provider   Boot provider id (skip wizard when paired with --model or non-interactive)
   --model      Boot model id (skip wizard when paired with --provider or non-interactive)
+  --pool       Launch the shared free-model pool (requires relay-ai pool verify)
   --help       Show this command help
   --version    Show version
 
@@ -9011,6 +9060,57 @@ async function runGeminiCommand(geminiArgs, trace = false, launch = {}) {
   const agentStdout = wantsCleanAgentStdout("gemini", passthroughArgs);
   setAgentStdoutMode(agentStdout);
   const prefs = loadPreferences();
+  const explicitPool = launch.pool === true || launch.launchProvider === RELAY_POOL_PROVIDER_ID && launch.launchModel === RELAY_POOL_MODEL_ID;
+  if (explicitPool) {
+    const pool = parseFreePool(prefs.freePool);
+    if (pool.members.length === 0) {
+      console.error(pc7.red("No free pool members. Add one with: relay-ai pool add <provider-account> <model>"));
+      return 1;
+    }
+    const state = loadPoolState(void 0, void 0, true);
+    const members = state ? servableMembers(state, Date.now(), false) : [];
+    const entry = poolCatalogEntry(pool, pool.receipts, "core");
+    if (!state || members.length === 0 || !entry) {
+      console.error(pc7.red("No verified free pool members. Run: relay-ai pool verify"));
+      return 1;
+    }
+    const poolRoute = {
+      aliasId: RELAY_POOL_MODEL_ID,
+      realModelId: RELAY_POOL_MODEL_ID,
+      displayName: entry.display_name,
+      upstreamUrl: "",
+      apiKey: "",
+      modelFormat: "openai",
+      contextWindow: entry.context_window,
+      providerId: RELAY_POOL_PROVIDER_ID
+    };
+    let proxyHandle2 = null;
+    try {
+      proxyHandle2 = await startGeminiProxy([poolRoute], trace);
+    } catch (err) {
+      p12.log.error(`Failed to start Gemini proxy: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+    const childEnv2 = prepareGeminiChildEnv(proxyHandle2.port, proxyHandle2.token);
+    if (!agentStdout) {
+      p12.log.info(`Free pool mode - ${pool.members.length} member(s), ${members.length} ready.`);
+      p12.log.info(`Gemini proxy started on port ${proxyHandle2.port}`);
+    }
+    let exitCode2 = 1;
+    try {
+      exitCode2 = await launchGemini(geminiPath, RELAY_POOL_MODEL_ID, childEnv2.env, passthroughArgs);
+    } finally {
+      childEnv2.cleanup();
+      proxyHandle2.close();
+    }
+    if (!agentStdout) {
+      p12.log.info("Gemini proxy stopped.");
+    }
+    if (trace) {
+      printTraceLog(getGeminiProxyDebugLogPath());
+    }
+    return exitCode2;
+  }
   const launchPlan = planLaunchWizard({
     explicit: { providerId: launch.launchProvider, modelId: launch.launchModel },
     childArgs: passthroughArgs,
@@ -11903,7 +12003,12 @@ async function resolveAntigravityLaunchRoutes(opts) {
     (entry) => !meetsContextFloor("antigravity", entry.model.contextWindow)
   );
   const launchable = resolved.filter((entry) => !tooSmall.includes(entry));
-  const poolRoutes = await buildAntigravityLaunchPoolRows(opts.allProviders, Math.min(POOL_ROW_BUDGET, maxRoutes), opts.effortMode ?? "rows", { warn: true });
+  const poolRoutes = await buildAntigravityLaunchPoolRows(
+    opts.allProviders,
+    Math.min(POOL_ROW_BUDGET, maxRoutes),
+    opts.effortMode ?? "rows",
+    { warn: true, force: opts.startOnPool === true }
+  );
   const routes = buildAntigravityRoutes(launchable, maxRoutes - poolRoutes.length, { effortMode: opts.effortMode });
   if (opts.startOnPool) routes.unshift(...poolRoutes);
   else routes.push(...poolRoutes);
@@ -11923,7 +12028,7 @@ async function resolveAntigravityLaunchRoutes(opts) {
 async function buildAntigravityLaunchPoolRows(allProviders, maxRows, effortMode, options = {}) {
   const freePool = parseFreePool(loadPreferences().freePool);
   const hasPoolEvidence = freePool.receipts.some((receipt) => receipt.targets.includes("antigravity") && receipt.billingSafe && receiptInForce(receipt, Date.now()));
-  if (!freePool.enabled || !hasPoolEvidence || maxRows < 1) return [];
+  if (!options.force && !freePool.enabled || !hasPoolEvidence || maxRows < 1) return [];
   if (options.warn) await warnDisabledPoolMembers(allProviders, freePool);
   const apiKeys = /* @__PURE__ */ new Map();
   for (const member of freePool.members) {
@@ -13098,7 +13203,7 @@ async function resolveAntigravityLaunch(prefs, boot) {
     p13.log.info(pc8.dim("Run relay-ai providers add or import to get started."));
     return null;
   }
-  if (boot?.launchProvider === "relay-free-pool" && boot.launchModel === "relay-free-pool") {
+  if (boot?.pool === true || boot?.launchProvider === "relay-free-pool" && boot.launchModel === "relay-free-pool") {
     return { startOnPool: true, allProviders };
   }
   if (boot?.launchProvider && boot?.launchModel) {
@@ -14234,6 +14339,7 @@ ${pc9.bold("Options:")}
                --with-native, favorites and --yes: relay-ai providers add vertex-anthropic)
   --with-native Load native Codex models beside Relay models for this launch
   --relay-only Keep the current Relay-only launch behavior
+  --pool       Launch the shared free-model pool (requires relay-ai pool verify)
   --yes, -y     Approve a fully specified launch and skip restart prompts
   --restore    Restore Codex config after an interrupted app session
   --config     Preview the generated Codex app configuration without launching
@@ -14526,7 +14632,8 @@ async function runCodexAppCommand(args, opts = {}) {
     return 0;
   }
   const prefs = loadPreferences();
-  const additivePool = additivePoolPreferences(prefs);
+  const explicitPool = opts.pool === true || launchProvider === "relay-free-pool" && opts.launchModel === "relay-free-pool";
+  const additivePool = additivePoolPreferences(prefs, { force: explicitPool });
   const appAdditive = additivePool ? createAdditivePoolRuntime(additivePool, providersForPicker(catalog), { appCatalog: true }) : void 0;
   if (appAdditive && additivePool) await warnDisabledPoolMembers(providersForPicker(catalog), additivePool);
   const additivePoolRuntime = appAdditive?.runtime;
@@ -14536,7 +14643,7 @@ async function runCodexAppCommand(args, opts = {}) {
   }
   let favorites = prefs.favoriteModels ?? [];
   let mixedMode = opts.codexLaunchMode === "mixed";
-  if (!configOnly && isTty && !(launchProvider && opts.launchModel) && opts.codexLaunchMode === void 0) {
+  if (!configOnly && isTty && !explicitPool && !(launchProvider && opts.launchModel) && opts.codexLaunchMode === void 0) {
     const selectedLaunchMode = await pickCodexLaunchMode("ChatGPT");
     if (!selectedLaunchMode) return 0;
     mixedMode = selectedLaunchMode === "mixed";
@@ -14548,7 +14655,7 @@ async function runCodexAppCommand(args, opts = {}) {
     compatible.find((lp) => lp.id === prefs.lastCodexProvider) ?? compatible[0]
   );
   let selectedModel = activeProvider.models.find((m) => m.id === prefs.lastCodexModel) ?? activeProvider.models[0];
-  if (launchProvider === "relay-free-pool" && opts.launchModel === "relay-free-pool") {
+  if (explicitPool) {
     startOnPool = true;
   } else if (codexAppUsesExplicitSelection(configOnly, launchProvider, opts.launchModel)) {
     const bootSelection = resolveBootSelection(
@@ -14790,6 +14897,9 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
         for (const r of resolvedFavorites) {
           console.log(`    ${pc9.cyan(r.model.id)}  ${pc9.dim(`(${r.providerName})`)}`);
         }
+      } else if (poolStart) {
+        console.log(`  ${pc9.bold("Mode:")}     Relay Free Pool`);
+        console.log(`  ${pc9.bold("Model:")}    ${poolStart.display_name} (${FREE_POOL_MODEL_ID})`);
       } else {
         console.log(`  ${pc9.bold("Mode:")}     Single model`);
         console.log(`  ${pc9.bold("Provider:")} ${activeProvider.name}`);
@@ -15443,6 +15553,7 @@ ${pc10.bold("Usage:")}
 
 ${pc10.bold("Options:")}
   --trace      Write proxy debug logs to ~/.relay-ai/logs/
+  --pool       Launch the shared free-model pool (requires relay-ai pool verify)
   --restore    Restore Claude Desktop config after an interrupted app session
   --help       Show this command help
   --version    Show version
@@ -15520,19 +15631,20 @@ async function runClaudeAppCommand(args, boot) {
   let selectedModel = null;
   let useFavorites = false;
   let startOnPool = false;
+  const explicitPool = boot?.pool === true || boot?.launchProvider === "relay-free-pool" && boot?.launchModel === "relay-free-pool";
   let autoPool;
-  if (prefs.freePool?.enabled === true) {
+  if (prefs.freePool?.enabled === true || explicitPool) {
     try {
       const poolProviders = await fetchProviderCatalog();
-      autoPool = prepareClaudeAutoPool(prefs, poolProviders);
+      autoPool = prepareClaudeAutoPool(prefs, poolProviders, Date.now(), { force: explicitPool });
       if (autoPool) await warnDisabledPoolMembers(poolProviders, autoPool.pool);
     } catch (err) {
       p15.log.warn(`Relay Free Pool is enabled but could not be prepared: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  if (boot?.launchProvider === "relay-free-pool" && boot.launchModel === "relay-free-pool") {
+  if (explicitPool) {
     if (!autoPool) {
-      p15.log.error("Relay Free Pool is not ready for Claude Desktop. Turn it on and add a tested member in relay-ai ui (Free Pool).");
+      p15.log.error("Relay Free Pool is not ready for Claude Desktop. Add a verified member with relay-ai pool verify or relay-ai ui (Free Pool).");
       return 1;
     }
     startOnPool = true;
@@ -16077,12 +16189,14 @@ RELAY FREE POOL (EXPERIMENTAL)
   One virtual model, "Relay Free Pool", backed by several zero-price models you add. Relay tries
   them strictly in your priority order and moves to the next only when one fails BEFORE any output
   reached the client (rate limit, timeout, error). No load balancing; free models differ in quality.
-  Where: Claude Code (relay-ai claude --pool), Codex CLI (relay-ai codex --pool), the ChatGPT/Codex
-  app, Claude Desktop, Antigravity (agy, app, IDE), and embedded apps through Relay Core.
+  Where: every supported tool accepts --pool (claude, claude-app, codex, codex-app/chatgpt, gemini,
+  agy, antigravity, antigravity-ide), plus embedded apps through Relay Core.
   Setup (nothing here sends a request unless it says so):
     relay-ai pool candidates [--search text]   free models available to add
     relay-ai pool add <provider> <model>       save a member (no test)
     relay-ai pool test <provider> <model>      1 small request + a tool call; saves the result
+    relay-ai pool verify [--all] [--reasoning] bulk check pool members (--all retests Ready too)
+    relay-ai pool clean [--disabled] [--unavailable] [--dry-run]  remove disabled/unavailable members
     relay-ai pool move <provider> <model> <up|down>   change priority
     relay-ai pool enable | disable             add/remove the pool in launched catalogs
     relay-ai pool status | list                readiness, context sizes, saved Test results
@@ -16095,7 +16209,8 @@ RELAY FREE POOL (EXPERIMENTAL)
   Disabled and skipped until a passing Test. Rate limits, 5xx and timeouts only cool it down.
   Context: the pool advertises its LARGEST member's window minus a 10% reserve; a request too big for
   a member skips that member for that request. If none fits: "No eligible free pool members".
-  Limits: 20 s to first content, 20 s idle, 60 s total, at most 8 attempts, 128 tools per member.
+  Limits: 15 s to first content, 20 s idle, 90 s total (with SSE/WS keepalives during failover),
+  at most 8 attempts, 128 tools per member.
   Relay Core (embedding apps such as alef): listRelayModels() lists "Relay Free Pool" with route id
   relay-free-pool::relay-free-pool; createRelayModel(routeId, { sessionId }) returns a LanguageModel
   that fails over across members. Pass sessionId to pin a conversation to the member that last
@@ -17246,9 +17361,10 @@ async function launchClaudeWithHttpProxy(options, dependencies = defaultDependen
       proxy.handle.caCertPath
     );
     writeGatewayDiscoveryCache(options.baseEnv, proxy.loaded.routes, options.pool);
+    const startingModel = options.startOnPool && options.pool ? claudeCodeClientModelId(CLAUDE_POOL_MODEL_ID, options.pool.contextWindow) : proxy.startingModel;
     const exitCode = await dependencies.launch(
       childEnv,
-      proxy.startingModel,
+      startingModel,
       options.claudeArgs
     );
     return { exitCode, proxy };
@@ -17464,7 +17580,7 @@ function parseArgs(args) {
         continue;
       }
       if (arg === "--pool") {
-        parsed2.error = "--pool is only supported by relay-ai codex";
+        parsed2.pool = true;
         continue;
       }
       if (arg === "--relay-only") {
@@ -17492,6 +17608,10 @@ function parseArgs(args) {
       }
       if (arg === "--version" || arg === "-v") {
         parsed2.showVersion = true;
+        continue;
+      }
+      if (arg === "--pool") {
+        parsed2.pool = true;
         continue;
       }
       if (arg === "--http-proxy") {
@@ -17532,6 +17652,7 @@ function parseArgs(args) {
       }
       if (arg === "--pool") {
         parsed2.codexPool = true;
+        parsed2.pool = true;
         continue;
       }
       if (arg === "--help" || arg === "-h") {
@@ -17558,6 +17679,10 @@ function parseArgs(args) {
       const arg = rest[i];
       if (arg === "--trace") {
         parsed2.trace = true;
+        continue;
+      }
+      if (arg === "--pool") {
+        parsed2.pool = true;
         continue;
       }
       if (arg === "--help" || arg === "-h") {
@@ -17588,6 +17713,10 @@ function parseArgs(args) {
       }
       if (arg === "--trace") {
         parsed2.trace = true;
+        continue;
+      }
+      if (arg === "--pool") {
+        parsed2.pool = true;
         continue;
       }
       if (arg === "--help" || arg === "-h") {
@@ -17626,6 +17755,10 @@ function parseArgs(args) {
       }
       if (arg === "--trace") {
         parsed2.trace = true;
+        continue;
+      }
+      if (arg === "--pool") {
+        parsed2.pool = true;
         continue;
       }
       if (arg === "--help" || arg === "-h") {
@@ -17687,7 +17820,10 @@ function parseArgs(args) {
       if (parsed.codexLaunchMode && parsed.codexLaunchMode !== mode) parsed.error = "--with-native and --relay-only cannot be used together";
       parsed.codexLaunchMode = mode;
     }
-    if (arg === "--pool") parsed.claudePool = true;
+    if (arg === "--pool") {
+      parsed.claudePool = true;
+      parsed.pool = true;
+    }
     if (arg === "--help" || arg === "-h") parsed.showHelp = true;
     if (arg === "--version" || arg === "-v") parsed.showVersion = true;
   }
@@ -17937,6 +18073,7 @@ ${pc11.bold("Usage:")}
 ${pc11.bold("Relay options:")}
   --provider <id>    Use a specific provider (skip picker)
   --model <id>       Use a specific model (skip picker)
+  --pool             Launch the shared free-model pool (requires relay-ai pool verify)
   --trace            Write debug log to ~/.relay-ai/logs/antigravity-agy-debug.log
   -h, --help         Show this help
   -v, --version      Show version
@@ -17963,6 +18100,7 @@ ${pc11.bold("Usage:")}
 ${pc11.bold("Relay options:")}
   --provider <id>    Use a specific provider (skip picker)
   --model <id>       Use a specific model (skip picker)
+  --pool             Launch the shared free-model pool (requires relay-ai pool verify)
   --use-existing-profile Use existing profile instead of isolated Relay profile
   --restore          Restore normal configuration if previous session crashed
   --trace            Write debug log to ~/.relay-ai/logs/antigravity-ide-debug.log
@@ -17994,6 +18132,7 @@ ${pc11.bold("Usage:")}
 ${pc11.bold("Relay options:")}
   --provider <id>    Use a specific provider (skip picker)
   --model <id>       Use a specific model (skip picker)
+  --pool             Launch the shared free-model pool (requires relay-ai pool verify)
   --trace            Write debug log to ~/.relay-ai/logs/antigravity-app-debug.log
   -h, --help         Show this help
   -v, --version      Show version
@@ -18279,7 +18418,8 @@ async function runClaudeCommand(parsed) {
     console.error("  npm install -g @anthropic-ai/claude-code\n");
     return 1;
   }
-  if (parsed.claudePool) {
+  const claudePoolWithNative = Boolean(parsed.claudePool && (httpProxy || codexLaunchMode === "mixed"));
+  if (parsed.claudePool && !claudePoolWithNative) {
     const pool = parseFreePool(loadPreferences().freePool);
     if (pool.members.length === 0) {
       console.error(pc11.red("No free pool members. Add one with: relay-ai pool add <provider-account> <model>"));
@@ -18377,7 +18517,7 @@ async function runClaudeCommand(parsed) {
   const prefs = dryRun ? {} : loadPreferences();
   const conflicts = detectConflicts();
   let favorites = dryRun ? [] : prefs.favoriteModels ?? [];
-  const httpProxyOnly = Boolean(httpProxy && !launchProvider && !launchModel);
+  const httpProxyOnly = Boolean(httpProxy && !launchProvider && !launchModel || claudePoolWithNative);
   const launchPlan = httpProxyOnly ? { skip: true, target: null } : planLaunchWizard({
     explicit: { providerId: launchProvider, modelId: launchModel },
     childArgs: claudeArgs,
@@ -18433,16 +18573,20 @@ Error: ${launchPlan.error}
     p16.log.info(pc11.dim("Run relay-ai providers add or import to get started."));
     return 0;
   }
-  const autoPool = dryRun || parsed.claudePool ? void 0 : prepareClaudeAutoPool(prefs, catalog);
+  const autoPool = dryRun || parsed.claudePool && !claudePoolWithNative ? void 0 : prepareClaudeAutoPool(prefs, catalog, Date.now(), { force: claudePoolWithNative });
   if (autoPool) await warnDisabledPoolMembers(catalog, autoPool.pool);
   if (autoPool) switchMenuActive = true;
-  const runTransparentProxy = async (selected) => {
+  const runTransparentProxy = async (selected, startOnPool = false) => {
+    if (startOnPool && !autoPool) {
+      console.error(pc11.red("No verified free pool member is currently Claude-compatible. Run: relay-ai pool verify"));
+      return 1;
+    }
     if (dryRun) {
       console.log("");
       console.log(pc11.bold(pc11.cyan("  DRY RUN \u2014 would keep Anthropic and add Relay models:")));
       console.log("");
       console.log(`  ${pc11.bold("Anthropic:")} normal Claude Code login and models`);
-      console.log(`  ${pc11.bold("Selected:")}  ${selected ? `${selected.providerId} / ${selected.modelId}` : "(none)"}`);
+      console.log(`  ${pc11.bold("Selected:")}  ${startOnPool ? autoPool.displayName : selected ? `${selected.providerId} / ${selected.modelId}` : "(none)"}`);
       console.log(`  ${pc11.bold("Favorites:")} ${favorites.length} saved`);
       console.log("");
       console.log(pc11.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
@@ -18461,6 +18605,7 @@ Error: ${launchPlan.error}
         claudeArgs: [...traceArgs2, ...claudeArgs],
         debug: trace,
         pool: autoPool ? { runtime: autoPool.runtime, displayName: autoPool.displayName, contextWindow: autoPool.contextWindow } : void 0,
+        startOnPool,
         onProxyReady: (proxy) => {
           if (agentStdout) return;
           const count = proxy.handle.modelIds.length;
@@ -18489,7 +18634,7 @@ Error: ${launchPlan.error}
       return 1;
     }
   };
-  if (httpProxyOnly) return runTransparentProxy();
+  if (httpProxyOnly) return runTransparentProxy(void 0, claudePoolWithNative);
   let launchMode = httpProxy ? "mixed" : codexLaunchMode ?? "relay-only";
   if (!httpProxy && !launchPlan.skip && codexLaunchMode === void 0) {
     const picked = await pickLaunchMode("Claude");
@@ -18543,8 +18688,8 @@ Error: ${launchPlan.error}
       }
       const providerChoice = chosen;
       if (providerChoice === "__pool__" && autoPool) {
-        if (launchMode === "mixed" && !httpProxy) {
-          p16.log.info("Starting on Relay Free Pool uses Relay models only for now (your normal Claude models are not added).");
+        if (launchMode === "mixed") {
+          return runTransparentProxy(void 0, true);
         }
         const resolvePoolFavorite = makeRouteResolver(catalog.length > 0 ? catalog : null);
         const favoriteRoutes = favorites.map((fav) => resolvePoolFavorite(fav.providerId, fav.modelId)).filter((route) => route !== void 0).slice(0, MAX_MODEL_CATALOG - 1);
@@ -18950,7 +19095,7 @@ Options:
       return 0;
     }
     if (parsed.uiAction === "stop") {
-      const { stopUiServer } = await import("./ui-command-XRVSB5UE.js");
+      const { stopUiServer } = await import("./ui-command-ALJYNMAQ.js");
       const result = await stopUiServer();
       if (result.stopped) {
         console.log(`
@@ -18963,11 +19108,11 @@ Options:
 `);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-XRVSB5UE.js");
+    const { runUiCommand } = await import("./ui-command-ALJYNMAQ.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode, background: parsed.uiBackground });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-HRIHAYBM.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-7Z3W3GZG.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;
@@ -19021,7 +19166,7 @@ Options:
       console.log(codexAppHelpText());
       return 0;
     }
-    return runCodexAppCommand(parsed.claudeArgs, { vertex: parsed.vertex, launchProvider: parsed.launchProvider, launchModel: parsed.launchModel, codexLaunchMode: parsed.codexLaunchMode, assumeYes: parsed.assumeYes });
+    return runCodexAppCommand(parsed.claudeArgs, { vertex: parsed.vertex, launchProvider: parsed.launchProvider, launchModel: parsed.launchModel, codexLaunchMode: parsed.codexLaunchMode, assumeYes: parsed.assumeYes, pool: parsed.pool });
   }
   if (parsed.command === "claude-app") {
     if (parsed.showVersion) {
@@ -19032,7 +19177,7 @@ Options:
       console.log(claudeAppHelpText());
       return 0;
     }
-    return runClaudeAppCommand(parsed.claudeArgs, { launchProvider: parsed.launchProvider, launchModel: parsed.launchModel });
+    return runClaudeAppCommand(parsed.claudeArgs, { launchProvider: parsed.launchProvider, launchModel: parsed.launchModel, pool: parsed.pool });
   }
   if (parsed.command === "codex") {
     if (parsed.showVersion) {
@@ -19062,7 +19207,8 @@ Options:
     }
     return runGeminiCommand(parsed.claudeArgs, parsed.trace, {
       launchProvider: parsed.launchProvider,
-      launchModel: parsed.launchModel
+      launchModel: parsed.launchModel,
+      pool: parsed.pool
     });
   }
   if (parsed.command === "agy") {
@@ -19076,7 +19222,8 @@ Options:
     }
     return runAgyCommand(parsed.claudeArgs, parsed.trace, {
       launchProvider: parsed.launchProvider,
-      launchModel: parsed.launchModel
+      launchModel: parsed.launchModel,
+      pool: parsed.pool
     });
   }
   if (parsed.command === "antigravity") {
@@ -19090,7 +19237,8 @@ Options:
     }
     return runAntigravityAppCommand(parsed.claudeArgs, parsed.trace, {
       launchProvider: parsed.launchProvider,
-      launchModel: parsed.launchModel
+      launchModel: parsed.launchModel,
+      pool: parsed.pool
     });
   }
   if (parsed.command === "antigravity-ide") {
@@ -19105,6 +19253,7 @@ Options:
     return runAntigravityIdeCommand(parsed.claudeArgs, parsed.trace, {
       launchProvider: parsed.launchProvider,
       launchModel: parsed.launchModel,
+      pool: parsed.pool,
       useExistingProfile: parsed.useExistingProfile,
       restore: parsed.restore
     });

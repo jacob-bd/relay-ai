@@ -472,7 +472,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.22.10",
+  version: "0.22.11",
   publishConfig: {
     access: "public"
   },
@@ -2686,6 +2686,8 @@ function parseProvider(raw) {
         at: r.at,
         ...typeof r.latencyMs === "number" ? { latencyMs: r.latencyMs } : {},
         ...typeof r.toolsPassed === "boolean" ? { toolsPassed: r.toolsPassed } : {},
+        ...typeof r.contextConfirmed === "boolean" ? { contextConfirmed: r.contextConfirmed } : {},
+        ...typeof r.contextWindow === "number" && Number.isSafeInteger(r.contextWindow) && r.contextWindow > 0 ? { contextWindow: r.contextWindow } : {},
         ...typeof r.error === "string" ? { error: r.error.slice(0, 300) } : {},
         ...r.transient === true ? { transient: true } : {}
       };
@@ -7396,7 +7398,9 @@ var GONE_PATTERN = new RegExp([
   String.raw`model\b[^.\n]{0,60}\b(?:does not exist|doesn't exist|no longer (?:available|supported|exists?)|has been (?:deprecated|retired|removed|discontinued|decommissioned|shut down)|is (?:deprecated|decommissioned|discontinued|retired))`,
   String.raw`\b(?:deprecated|decommissioned|discontinued|retired|sunset)\b[^.\n]{0,20}\bmodel\b`,
   String.raw`\bthis model (?:was|has been|is) (?:deprecated|decommissioned|discontinued|retired|removed|shut down)`,
-  String.raw`\bunknown model\b`
+  String.raw`\bunknown model\b`,
+  String.raw`\bnot a valid model id\b`,
+  String.raw`\bmodel id is not valid\b`
 ].join("|"), "i");
 var PROMO_PATTERN = new RegExp([
   // The model's own free access ended. "free trial expired" is account-wide and is a quota matter, not a verdict on one model.
@@ -7441,7 +7445,7 @@ function poolFailure(error, now = Date.now()) {
   if (status === 402) return { kind: "quota", status };
   if (status === 404 || status === 410) return { kind: "missing", status };
   if ([401, 403, 404].includes(status ?? 0)) return { kind: "access", status };
-  if (status === 400 && /context.{0,20}(length|window|exceed)|prompt.{0,20}too long/i.test(value?.message ?? "")) return { kind: "context", status };
+  if (status === 400 && /context.{0,20}(?:length|window|exceed)|maximum context|prompt.{0,20}too long|too many tokens|token limit|request too large/i.test(text2)) return { kind: "context", status };
   if (status === 400 || status === 422) return { kind: "invalid", status };
   if (status !== void 0 && status >= 500 || /ECONNRESET|ETIMEDOUT|ENOTFOUND|first-content-timeout|idle-or-total-timeout|provisional-buffer-limit|missing-valid-finish|invalid-finish|stream-error|Pool route entered cooldown/.test(value?.message ?? "")) return { kind: "transient", status };
   return { kind: "unknown", status };
@@ -8238,9 +8242,9 @@ function poolErrorDetail(error) {
 var FREE_POOL_MODEL_ID = "relay-free-pool";
 var DEFAULT_POOL_LIMITS = {
   attempts: MAX_POOL_ATTEMPTS,
-  firstContentMs: 2e4,
+  firstContentMs: 15e3,
   idleMs: 2e4,
-  totalMs: 6e4,
+  totalMs: 9e4,
   bufferBytes: 65536,
   cleanupMs: 1e3
 };
@@ -8382,14 +8386,14 @@ var RELAY_POOL_ROUTE_ID = `${RELAY_POOL_PROVIDER_ID}::${RELAY_POOL_MODEL_ID}`;
 var ORIGIN_NAMESPACE = "relay-pool";
 var RAW = /* @__PURE__ */ Symbol("relay-pool-raw-part");
 var NO_CREDENTIAL_NEEDED = () => "relay-core-pool";
-function loadPoolState(registryPath, copilotData) {
+function loadPoolState(registryPath, copilotData, ignoreEnabled = false) {
   let pool;
   try {
     pool = parseFreePool(loadPreferences().freePool);
   } catch {
     return void 0;
   }
-  if (pool.enabled !== true || pool.members.length === 0) return void 0;
+  if (!ignoreEnabled && pool.enabled !== true || pool.members.length === 0) return void 0;
   const ids = new Set(pool.members.map((member) => member.providerId));
   const registry = loadCoreRegistry(registryPath);
   const trimmed = {
@@ -8404,8 +8408,8 @@ function loadPoolState(registryPath, copilotData) {
   };
   return { pool, providers: materializeRegistry(trimmed, NO_CREDENTIAL_NEEDED, { agent: "codex" }) };
 }
-async function loadPoolStateForCall() {
-  const first = loadPoolState();
+async function loadPoolStateForCall(ignoreEnabled = false) {
+  const first = loadPoolState(void 0, void 0, ignoreEnabled);
   if (!first) return void 0;
   const copilot = first.pool.members.filter((member) => isProviderKind(member.providerId, "github-copilot"));
   if (copilot.length === 0) return first;
@@ -8420,7 +8424,7 @@ async function loadPoolStateForCall() {
       data.set(provider.id, void 0);
     }
   }
-  return loadPoolState(void 0, data);
+  return loadPoolState(void 0, data, ignoreEnabled);
 }
 function servableMembers(state, now, planKnown = true) {
   const found = [];
@@ -8549,7 +8553,7 @@ function wrapPoolError(error) {
 }
 var sessions = new PoolSessionRoutes();
 async function memberModel(routeId, context) {
-  const { createRelayModel: createRelayModel2 } = await import("./model-PMFDSMJQ.js");
+  const { createRelayModel: createRelayModel2 } = await import("./model-SWDKC77Y.js");
   return createRelayModel2(routeId, {
     sessionId: context.sessionId,
     ...context.options?.onDebug ? { onDebug: context.options.onDebug } : {},
@@ -8651,7 +8655,7 @@ function buildRoutes(members, context, skips) {
 }
 async function* runPool(options, call) {
   const now = Date.now();
-  const state = await loadPoolStateForCall();
+  const state = await loadPoolStateForCall(options?.ignoreEnabled === true);
   if (!state) {
     throw new RelayCoreError("UNSUPPORTED_MODEL", "Relay Free Pool is not enabled or has no members \u2014 set it up with `relay-ai pool` or relay-ai ui.", { routeId: RELAY_POOL_ROUTE_ID });
   }
@@ -8790,7 +8794,7 @@ async function generateFromStream(parts) {
   };
 }
 function createRelayPoolModel(options) {
-  const state = loadPoolState();
+  const state = loadPoolState(void 0, void 0, options?.ignoreEnabled === true);
   const members = state ? servableMembers(state, Date.now(), false) : [];
   if (!state || members.length === 0) {
     throw new RelayCoreError("UNSUPPORTED_MODEL", "Relay Free Pool is not enabled or has no usable members \u2014 set it up with `relay-ai pool` or relay-ai ui.", { routeId: RELAY_POOL_ROUTE_ID });
@@ -9150,4 +9154,4 @@ export {
   loadCoreRegistry,
   listRelayModels
 };
-//# sourceMappingURL=chunk-I4DJQ67I.js.map
+//# sourceMappingURL=chunk-S2HN3KAP.js.map

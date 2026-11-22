@@ -2,15 +2,15 @@
 import {
   PoolHealthStore,
   poolEndpointScope
-} from "./chunk-VX6SGCM7.js";
+} from "./chunk-SDRVP6UH.js";
 import {
   poolEndpointRevision
-} from "./chunk-YXREHFK3.js";
+} from "./chunk-2UFMXYWV.js";
 
 // src/pool/disabled.ts
 import pc from "picocolors";
 function disabledMessage(note) {
-  return "Disabled after an error: " + note + ". Test it again to re-enable.";
+  return "Disabled after an error: " + note + ". Remove from the pool, or Test it again to re-enable.";
 }
 function revisionFor(provider, modelId) {
   const model = provider.models.find((item) => item.id === modelId);
@@ -23,6 +23,38 @@ function revisionFor(provider, modelId) {
     upstreamModelId: model.upstreamModelId,
     headers: provider.headers
   });
+}
+function memberEndpointRevision(providers, member) {
+  const provider = providers.find((item) => item.id === member.providerId);
+  return provider ? revisionFor(provider, member.modelId) : void 0;
+}
+async function recordTestPoolFailure(member, providers, failure, store = new PoolHealthStore()) {
+  if (!failure || failure.kind !== "disabled" && failure.kind !== "missing") {
+    return { disabled: false };
+  }
+  const revision = memberEndpointRevision(providers, member);
+  if (!revision) return { disabled: false };
+  try {
+    const res = await store.record([poolEndpointScope(member.providerId, revision, member.modelId)], failure);
+    return { disabled: res.disabled === true, ...res.note ? { note: res.note } : {} };
+  } catch {
+    return { disabled: false };
+  }
+}
+async function clearPoolMemberHealth(member, providers, receipts = [], store = new PoolHealthStore()) {
+  const revisions = /* @__PURE__ */ new Set();
+  const current = memberEndpointRevision(providers, member);
+  if (current) revisions.add(current);
+  for (const receipt of receipts) {
+    if (receipt.member.providerId === member.providerId && receipt.member.modelId === member.modelId) {
+      revisions.add(receipt.endpointRevision);
+    }
+  }
+  if (revisions.size === 0) return;
+  try {
+    await store.clear([...revisions].map((rev) => poolEndpointScope(member.providerId, rev, member.modelId)));
+  } catch {
+  }
 }
 async function disabledPoolMembers(providers, pool, store = new PoolHealthStore()) {
   const disabled = /* @__PURE__ */ new Map();
@@ -115,8 +147,10 @@ export {
   extractApiKey,
   sendJson,
   disabledMessage,
+  recordTestPoolFailure,
+  clearPoolMemberHealth,
   disabledPoolMembers,
   clearDisabledPoolMember,
   warnDisabledPoolMembers
 };
-//# sourceMappingURL=chunk-PQ4VCNTJ.js.map
+//# sourceMappingURL=chunk-JZ53BAL4.js.map

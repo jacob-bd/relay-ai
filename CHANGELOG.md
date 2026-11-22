@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.22.11] - 2026-11-21
+
+### Added
+
+- **`--pool` flag across every supported tool (including Native + Relay mode).** `claude`, `claude-app`, `codex`, `codex-app` (`chatgpt`), `gemini`, `agy`, `antigravity`, and `antigravity-ide` now all accept `--pool` to launch directly on the Relay Free Pool (even when additive pool inclusion is switched off). Tools that support Native + Relay mode (`claude --pool --http-proxy` / `--with-native`, `codex --pool --with-native`, and `codex-app --pool --with-native`) can now launch on Relay Free Pool alongside native models from both CLI and the Apps & Launch UI, which also adds a **`🏊 Relay Free Pool`** quick-pick button to every tool's model selector. Gemini CLI routes `relay-free-pool` through the shared Core pool model.
+- **SSE & WebSocket keepalives during pool failover.** Streaming pool requests now send periodic keepalives after a 1.5s grace period while failing over before content commits — spec-compliant `event: ping` for Claude Code, Claude Desktop, and Server Anthropic; W3C `: keepalive` comments for Codex HTTP and Server OpenAI Chat; and RFC 6455 WebSocket `ping` frames for Codex WebSocket (Mixed mode & `codex-app`) — preventing client headers/read timeouts from aborting failover early. If all members fail after headers are sent, each surface emits its protocol-native stream error event cleanly.
+- **Batch pool health check & eviction UX ("Test pool" / "Retest all" + `pool clean`).**
+  - The Free Pool UI now includes **Test pool** (tests untested and disabled members) and **Retest all** (re-audits Ready models too while preserving valid receipts on transient 429/5xx/timeouts), with live per-row progress, latency badges, a **Stop** button, and automatic per-provider skipping on rate limits.
+  - Separate **Disabled** (provider-rejected) and **Unavailable** (missing from catalog / offline) banners with confirmed batch removal (`Remove disabled (N)…` / `Remove unavailable (N)…`) and highlighted row actions.
+  - CLI parity: `relay-ai pool verify --all` (with `SIGINT` handling, skipping unavailable ghosts, preserving Ready receipts on transient errors) and `relay-ai pool clean [--disabled] [--unavailable] [--dry-run]`.
+
+### Fixed
+
+- **Unified pool failover timeouts & context-overflow classification.** Unified `ClaudePoolRuntime` onto shared `DEFAULT_POOL_LIMITS` (`15s` first-content, `20s` idle, `90s` total) and fixed HTTP 400 context-overflow classification to inspect `responseBody` alongside `message`.
+- **Permanent test failures now mark pool members `Disabled` immediately, and removing members cleans up `health.json`.** Sanitized `PoolFailure` classifications now propagate out of `probePoolModel`, `verifyPoolMember`, and `testModel` into `PoolHealthStore` for saved pool members, and removing a member clears its persisted disabled record so stale entries never linger or affect re-added models.
+- **Rich test-result hover popover across Providers and Free Pool.** Hovering or focusing any test badge (`✓ Passed`, `⚠ No tools`, `✗ Failed`, `⏱ Try again`, `Untested`) or Free Pool member status pill now opens a floating details card showing model availability, tool-call confirmation, confirmed vs. unconfirmed context window size, timestamp/latency, and — on any failure — the last failure reason.
+- **Tool-calling check & Free Pool eligibility enforcement.** `testModel()` now requests `relay_pool_probe` directly with `toolChoice: 'required'` (falling back to auto tool choice if a server rejects `required`, then plain chat if tools are unsupported) instead of inviting models to stop after `"OK"`. Candidates whose latest test returned `toolsPassed: false` now display **`⚠ No tools`** on the Free Pool tab (`✓ Chat only` on Providers) and are blocked from being added to the pool (`canAdd: false` + server-side rejection).
+- **Gemini proxy deferred headers & disconnect abort.** `startGeminiProxy` now defers `200 OK` SSE headers on pool routes until the first real chunk arrives (returning HTTP 502 JSON on pre-header pool failures instead of fake candidate text) and wires client disconnects into `abortSignal`.
+
 ## [0.22.10] - 2026-11-19
 
 ### Added

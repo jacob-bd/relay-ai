@@ -17,7 +17,7 @@ import {
   isProviderKind,
   providerKind,
   selectBetaFlags
-} from "./chunk-7RSJEDK4.js";
+} from "./chunk-YFZNEGUV.js";
 import {
   hasApplicationDefaultCredentials,
   loadVertexModelEntries,
@@ -556,6 +556,8 @@ function parseProvider(raw) {
         at: r.at,
         ...typeof r.latencyMs === "number" ? { latencyMs: r.latencyMs } : {},
         ...typeof r.toolsPassed === "boolean" ? { toolsPassed: r.toolsPassed } : {},
+        ...typeof r.contextConfirmed === "boolean" ? { contextConfirmed: r.contextConfirmed } : {},
+        ...typeof r.contextWindow === "number" && Number.isSafeInteger(r.contextWindow) && r.contextWindow > 0 ? { contextWindow: r.contextWindow } : {},
         ...typeof r.error === "string" ? { error: r.error.slice(0, 300) } : {},
         ...r.transient === true ? { transient: true } : {}
       };
@@ -5503,4 +5505,4 @@ export {
   deepMergeProviderOptions,
   thinkingProviderOptions
 };
-//# sourceMappingURL=chunk-YXREHFK3.js.map
+//# sourceMappingURL=chunk-2UFMXYWV.js.map

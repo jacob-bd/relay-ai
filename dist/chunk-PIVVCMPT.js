@@ -2,14 +2,19 @@
 import {
   buildIntelligenceLookup,
   loadIntelligenceCache
-} from "./chunk-AUMFPJS7.js";
+} from "./chunk-6B7CWB2A.js";
 import {
   clearDisabledPoolMember,
+  clearPoolMemberHealth,
   disabledMessage,
   disabledPoolMembers,
   readBody,
+  recordTestPoolFailure,
   sendJson
-} from "./chunk-PQ4VCNTJ.js";
+} from "./chunk-JZ53BAL4.js";
+import {
+  recordModelTestResult
+} from "./chunk-7CHQ4LKN.js";
 import {
   fetchProviderCatalog,
   groupPoolActivity,
@@ -20,7 +25,7 @@ import {
   readPoolActivity,
   summarizePoolEvents,
   verifyConfiguredPoolMember
-} from "./chunk-VX6SGCM7.js";
+} from "./chunk-SDRVP6UH.js";
 import {
   addFreePoolMember,
   classifyFreeStatus,
@@ -35,7 +40,7 @@ import {
   poolEndpointRevision,
   removeFreePoolMember,
   savePreferences
-} from "./chunk-YXREHFK3.js";
+} from "./chunk-2UFMXYWV.js";
 
 // src/ui/pool-api.ts
 var verifying = /* @__PURE__ */ new Set();
@@ -95,7 +100,10 @@ function modelMetadata(provider, model, intelligenceFor) {
 }
 function failedTestProblem(providerId, modelId) {
   const result = loadRegistry().providers.find((item) => item.id === providerId)?.modelTestResults?.[modelId];
-  return result && !result.ok && !result.transient ? "Failed its last test. Run Test again; it can be added once a test passes." : void 0;
+  if (!result) return void 0;
+  if (!result.ok && !result.transient) return "Failed its last test. Run Test again; it can be added once a test passes.";
+  if (result.ok && result.toolsPassed === false) return "Tool calling was not confirmed in the last test. The Relay Free Pool requires tool calling for coding tools.";
+  return void 0;
 }
 function testResultFor(providerId, modelId) {
   return loadRegistry().providers.find((item) => item.id === providerId)?.modelTestResults?.[modelId];
@@ -140,6 +148,15 @@ async function verifyUiPoolMember(providerId, modelId, signal, options = {}) {
     try {
       const result = await verifyConfiguredPoolMember(member, providers, signal, options);
       if (result.status !== "verified") {
+        if (result.poolFailure && (result.poolFailure.kind === "disabled" || result.poolFailure.kind === "missing")) {
+          try {
+            const currentPool = parseFreePool(loadPreferences().freePool);
+            if (poolMember(currentPool, member)) {
+              await recordTestPoolFailure(member, providers, result.poolFailure);
+            }
+          } catch {
+          }
+        }
         try {
           saveReceipts(member, void 0);
         } catch (error) {
@@ -166,6 +183,171 @@ async function verifyUiPoolMember(providerId, modelId, signal, options = {}) {
     return { ok: false, status: "skipped", reason: "pool-verification-failed", diagnostic: poolDiagnostic(error) };
   }
 }
+async function recordUiPoolTestFailure(providerId, modelId, failure) {
+  if (!failure || failure.kind !== "disabled" && failure.kind !== "missing") {
+    return { disabled: false };
+  }
+  try {
+    const pool = parseFreePool(loadPreferences().freePool);
+    if (!poolMember(pool, { providerId, modelId })) return { disabled: false };
+    const providers = await fetchProviderCatalog();
+    return await recordTestPoolFailure({ providerId, modelId }, providers, failure);
+  } catch {
+    return { disabled: false };
+  }
+}
+async function checkUiPoolMember(providerId, modelId, signal, options = {}) {
+  const started = Date.now();
+  try {
+    const providers = options.providers ?? await fetchProviderCatalog();
+    const provider = providers.find((item) => item.id === providerId);
+    const model = provider?.models.find((item) => item.id === modelId);
+    const member = { providerId, modelId };
+    if (!provider || !model) {
+      return { ok: false, status: "unavailable", reason: "Model is unavailable or hidden" };
+    }
+    const membershipProblem = poolMembershipProblem(provider, model);
+    if (membershipProblem) {
+      return { ok: false, status: "unavailable", reason: membershipProblem };
+    }
+    const routingProblem = poolRoutingProblem(provider, model);
+    if (routingProblem) {
+      return { ok: false, status: "failed", reason: routingProblem };
+    }
+    const key = memberKey(member);
+    if (verifying.has(key)) {
+      return { ok: false, status: "transient", transient: true, reason: "Verification already in progress" };
+    }
+    verifying.add(key);
+    try {
+      const result = await verifyConfiguredPoolMember(member, providers, signal);
+      const latencyMs = Date.now() - started;
+      if (result.status === "verified") {
+        try {
+          saveReceipts(member, result.receipt);
+        } catch (error) {
+          return { ok: false, status: "failed", reason: "receipt-save-failed", diagnostic: poolDiagnostic(error), latencyMs };
+        }
+        await clearDisabledPoolMember(member, result.receipt.endpointRevision);
+        try {
+          const prev = testResultFor(provider.id, model.id);
+          const ctxConfirmed = prev?.contextConfirmed === true || contextSourceFor(provider.id, model) === "measured" || contextSourceFor(provider.id, model) === "set";
+          recordModelTestResult(provider.id, model.id, {
+            ok: true,
+            latencyMs,
+            toolsPassed: true,
+            ...ctxConfirmed ? { contextConfirmed: true } : {},
+            ...result.receipt.contextWindow ? { contextWindow: result.receipt.contextWindow } : {}
+          });
+        } catch {
+        }
+        return { ok: true, status: "verified", latencyMs };
+      }
+      const failure = result.poolFailure;
+      const rateLimited = failure?.kind === "rate-limit" || failure?.kind === "quota";
+      const isTransient = rateLimited || failure?.kind === "transient" || result.reason === "probe-timeout";
+      let disabled = false;
+      let disabledNote;
+      if (failure?.kind === "disabled" || failure?.kind === "missing") {
+        const currentPool = parseFreePool(loadPreferences().freePool);
+        if (poolMember(currentPool, member)) {
+          const recorded = await recordTestPoolFailure(member, providers, failure);
+          disabled = recorded.disabled;
+          disabledNote = recorded.note ?? failure.note;
+        }
+      }
+      if (!isTransient || !options.preserveReceiptOnTransient) {
+        try {
+          saveReceipts(member, void 0);
+        } catch {
+        }
+      }
+      if (disabled) {
+        const msg = disabledMessage(disabledNote ?? "model no longer available");
+        try {
+          recordModelTestResult(provider.id, model.id, { ok: false, error: msg });
+        } catch {
+        }
+        return {
+          ok: false,
+          status: "disabled",
+          permanent: true,
+          disabledNote: disabledNote ?? "model no longer available",
+          reason: msg,
+          ...result.diagnostic ? { diagnostic: result.diagnostic } : {},
+          latencyMs
+        };
+      }
+      if (rateLimited) {
+        const msg = failure?.kind === "quota" ? "Provider quota or credits exhausted" : "Provider rate limit reached (429)";
+        try {
+          recordModelTestResult(provider.id, model.id, { ok: false, error: msg, transient: true });
+        } catch {
+        }
+        return {
+          ok: false,
+          status: "rate-limited",
+          transient: true,
+          rateLimited: true,
+          reason: msg,
+          latencyMs
+        };
+      }
+      if (failure?.kind === "missing") {
+        const msg = "Not found (404) \u2014 run Test again to confirm, or remove from pool";
+        try {
+          recordModelTestResult(provider.id, model.id, { ok: false, error: msg });
+        } catch {
+        }
+        return {
+          ok: false,
+          status: "failed",
+          reason: msg,
+          ...result.diagnostic ? { diagnostic: result.diagnostic } : {},
+          latencyMs
+        };
+      }
+      if (isTransient) {
+        const msg = result.reason === "probe-timeout" ? "Timed out waiting for response" : "Temporary provider error";
+        try {
+          recordModelTestResult(provider.id, model.id, { ok: false, error: msg, transient: true });
+        } catch {
+        }
+        return {
+          ok: false,
+          status: "transient",
+          transient: true,
+          reason: msg,
+          ...result.diagnostic ? { diagnostic: result.diagnostic } : {},
+          latencyMs
+        };
+      }
+      const failMsg = result.reason === "probe-invalid-output" ? "Tool calling was not confirmed (model did not return a valid tool call)" : result.reason === "probe-truncated" ? "Response truncated before completing the tool call" : result.reason;
+      try {
+        recordModelTestResult(provider.id, model.id, { ok: false, error: failMsg });
+      } catch {
+      }
+      return {
+        ok: false,
+        status: "failed",
+        reason: failMsg,
+        ...result.diagnostic ? { diagnostic: result.diagnostic } : {},
+        latencyMs
+      };
+    } finally {
+      verifying.delete(key);
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: "transient",
+      transient: true,
+      reason: "pool-verification-failed",
+      diagnostic: poolDiagnostic(error),
+      latencyMs: Date.now() - started
+    };
+  }
+}
 async function handlePoolApi(req, res) {
   try {
     let catalog;
@@ -178,6 +360,30 @@ async function handlePoolApi(req, res) {
       else if (body.action === "enabled") {
         if (typeof body.enabled !== "boolean") throw new Error("enabled must be true or false");
         pool = parseFreePool({ ...pool, enabled: body.enabled });
+      } else if (body.action === "remove-batch") {
+        if (!Array.isArray(body.members) || body.members.length === 0) {
+          throw new Error("Provide a non-empty list of members to remove");
+        }
+        const targets = [];
+        for (const item of body.members) {
+          if (!item || typeof item.providerId !== "string" || typeof item.modelId !== "string") {
+            throw new Error("Each member to remove must specify providerId and modelId");
+          }
+          targets.push({ providerId: item.providerId, modelId: item.modelId });
+        }
+        const providers2 = await loadCatalog().catch(() => []);
+        let latest = parseFreePool(loadPreferences().freePool);
+        const oldReceipts = latest.receipts;
+        let removed = 0;
+        for (const target of targets) {
+          const before = latest.members.length;
+          latest = removeFreePoolMember(latest, target);
+          if (latest.members.length < before) removed += 1;
+          await clearPoolMemberHealth(target, providers2, oldReceipts);
+        }
+        savePreferences({ freePool: latest });
+        sendJson(res, 200, { ok: true, removed });
+        return;
       } else {
         const member = { providerId: body.providerId, modelId: body.modelId };
         if (typeof member.providerId !== "string" || typeof member.modelId !== "string") throw new Error("Choose a provider account and model");
@@ -189,8 +395,13 @@ async function handlePoolApi(req, res) {
           const reason = poolMembershipProblem(provider, model) ?? failedTestProblem(member.providerId, member.modelId);
           if (reason) throw new Error(reason);
           pool = addFreePoolMember(pool, member);
-        } else if (body.action === "remove") pool = removeFreePoolMember(pool, member);
-        else if (body.action === "move") {
+        } else if (body.action === "remove") {
+          const providers2 = await loadCatalog().catch(() => []);
+          const fresh = parseFreePool(loadPreferences().freePool);
+          const oldReceipts = fresh.receipts;
+          pool = removeFreePoolMember(fresh, member);
+          await clearPoolMemberHealth(member, providers2, oldReceipts);
+        } else if (body.action === "move") {
           if (index < 0) throw new Error("Invalid priority change");
           if (Number.isInteger(body.toIndex)) {
             pool = moveFreePoolMemberTo(pool, member, body.toIndex);
@@ -198,6 +409,26 @@ async function handlePoolApi(req, res) {
             const next = index + body.direction;
             if (next >= 0 && next < pool.members.length) pool = moveFreePoolMemberTo(pool, member, next);
           } else throw new Error("Invalid priority change");
+        } else if (body.action === "check") {
+          if (index < 0) throw new Error("Add the model to the pool first");
+          const controller = new AbortController();
+          const cancel = () => {
+            if (!res.writableEnded) controller.abort();
+          };
+          res.once("close", cancel);
+          try {
+            const timeout = AbortSignal.timeout(25e3);
+            const result = await checkUiPoolMember(
+              member.providerId,
+              member.modelId,
+              AbortSignal.any([controller.signal, timeout]),
+              { preserveReceiptOnTransient: body.preserveReceiptOnTransient === true }
+            );
+            if (!res.destroyed) sendJson(res, 200, result);
+          } finally {
+            res.removeListener("close", cancel);
+          }
+          return;
         } else if (body.action === "verify") {
           if (index < 0) throw new Error("Add the model to the pool first");
           const provider = (await loadCatalog()).find((item) => item.id === member.providerId);
@@ -248,13 +479,16 @@ function poolView(providers, pool, disabled = /* @__PURE__ */ new Map()) {
     const routingProblem = poolRoutingProblem(provider, model);
     const receipt = membershipProblem ? void 0 : currentPoolReceipt(pool.receipts, raw, revision(provider, model), Date.now());
     const off = membershipProblem ? void 0 : disabled.get(raw.providerId + "/" + raw.modelId);
+    const lastTest = testResultFor(provider.id, model.id);
+    const noToolsNote = !receipt && lastTest?.ok && lastTest.toolsPassed === false ? "Tool calling was not confirmed in the last test (required for the Relay Free Pool)." : void 0;
     return {
       ...modelMetadata(provider, model, intelligenceFor),
       ...raw,
       status: membershipProblem ? "Unavailable" : off ? "Disabled" : routingProblem ? "Needs test" : receipt ? "Ready" : "Needs test",
-      reason: membershipProblem ?? (off ? disabledMessage(off.note) : routingProblem),
+      reason: membershipProblem ?? (off ? disabledMessage(off.note) : routingProblem ?? noToolsNote),
       // The window routing actually uses is the one saved by the last Test; it can lag a size set or measured since.
       routingContextWindow: receipt?.contextWindow,
+      ...lastTest ? { testResult: lastTest } : {},
       targets: receipt?.targets ?? [],
       effortLevels: receipt?.effortLevels ?? []
     };
@@ -277,15 +511,17 @@ function poolView(providers, pool, disabled = /* @__PURE__ */ new Map()) {
     members,
     candidates,
     effort: pool.effort,
-    // Shown as a banner so a disabled member is never easy to miss, wherever it sits in the priority list.
-    disabled: members.filter((member) => member.status === "Disabled").map((member) => ({ providerId: member.providerId, modelId: member.modelId, reason: member.reason }))
+    // Shown as banners so disabled or catalog-missing members are never easy to miss, wherever they sit in priority order.
+    disabled: members.filter((member) => member.status === "Disabled").map((member) => ({ providerId: member.providerId, modelId: member.modelId, reason: member.reason })),
+    unavailable: members.filter((member) => member.status === "Unavailable").map((member) => ({ providerId: member.providerId, modelId: member.modelId, reason: member.reason }))
   };
 }
 
 export {
   invalidateUiPoolMember,
   verifyUiPoolMember,
+  recordUiPoolTestFailure,
   handlePoolApi,
   poolView
 };
-//# sourceMappingURL=chunk-FTFM4DQN.js.map
+//# sourceMappingURL=chunk-PIVVCMPT.js.map

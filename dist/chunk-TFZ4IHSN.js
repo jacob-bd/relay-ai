@@ -16,12 +16,12 @@ import {
   recordPoolActivity,
   resolveLocalProviderApiKey,
   retryPoolFailure
-} from "./chunk-VX6SGCM7.js";
+} from "./chunk-SDRVP6UH.js";
 import {
   copilotPlanTier,
   filterCachedCopilotModels,
   stripGoogleModelPrefix
-} from "./chunk-CFSNPQWS.js";
+} from "./chunk-XRM7HLAA.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
@@ -58,11 +58,11 @@ import {
   sseChunk,
   streamActivity,
   thinkingProviderOptions
-} from "./chunk-YXREHFK3.js";
+} from "./chunk-2UFMXYWV.js";
 import {
   isProviderKind,
   resolveProviderOAuthProviderData
-} from "./chunk-7RSJEDK4.js";
+} from "./chunk-YFZNEGUV.js";
 
 // src/core/pool-model.ts
 import { randomUUID as randomUUID2 } from "crypto";
@@ -2353,9 +2353,9 @@ var FREE_POOL_MODEL_ID = "relay-free-pool";
 var FREE_POOL_PROVIDER_ID = "relay-free-pool";
 var DEFAULT_POOL_LIMITS = {
   attempts: MAX_POOL_ATTEMPTS,
-  firstContentMs: 2e4,
+  firstContentMs: 15e3,
   idleMs: 2e4,
-  totalMs: 6e4,
+  totalMs: 9e4,
   bufferBytes: 65536,
   cleanupMs: 1e3
 };
@@ -2867,14 +2867,14 @@ var RELAY_POOL_ROUTE_ID = `${RELAY_POOL_PROVIDER_ID}::${RELAY_POOL_MODEL_ID}`;
 var ORIGIN_NAMESPACE = "relay-pool";
 var RAW = /* @__PURE__ */ Symbol("relay-pool-raw-part");
 var NO_CREDENTIAL_NEEDED = () => "relay-core-pool";
-function loadPoolState(registryPath, copilotData) {
+function loadPoolState(registryPath, copilotData, ignoreEnabled = false) {
   let pool;
   try {
     pool = parseFreePool(loadPreferences().freePool);
   } catch {
     return void 0;
   }
-  if (pool.enabled !== true || pool.members.length === 0) return void 0;
+  if (!ignoreEnabled && pool.enabled !== true || pool.members.length === 0) return void 0;
   const ids = new Set(pool.members.map((member) => member.providerId));
   const registry = loadCoreRegistry(registryPath);
   const trimmed = {
@@ -2889,8 +2889,8 @@ function loadPoolState(registryPath, copilotData) {
   };
   return { pool, providers: materializeRegistry(trimmed, NO_CREDENTIAL_NEEDED, { agent: "codex" }) };
 }
-async function loadPoolStateForCall() {
-  const first = loadPoolState();
+async function loadPoolStateForCall(ignoreEnabled = false) {
+  const first = loadPoolState(void 0, void 0, ignoreEnabled);
   if (!first) return void 0;
   const copilot = first.pool.members.filter((member) => isProviderKind(member.providerId, "github-copilot"));
   if (copilot.length === 0) return first;
@@ -2905,7 +2905,7 @@ async function loadPoolStateForCall() {
       data.set(provider.id, void 0);
     }
   }
-  return loadPoolState(void 0, data);
+  return loadPoolState(void 0, data, ignoreEnabled);
 }
 function servableMembers(state, now, planKnown = true) {
   const found = [];
@@ -3034,7 +3034,7 @@ function wrapPoolError(error) {
 }
 var sessions = new PoolSessionRoutes();
 async function memberModel(routeId, context) {
-  const { createRelayModel } = await import("./model-PXSWFL5Y.js");
+  const { createRelayModel } = await import("./model-24VYMZUU.js");
   return createRelayModel(routeId, {
     sessionId: context.sessionId,
     ...context.options?.onDebug ? { onDebug: context.options.onDebug } : {},
@@ -3136,7 +3136,7 @@ function buildRoutes(members, context, skips) {
 }
 async function* runPool(options, call) {
   const now = Date.now();
-  const state = await loadPoolStateForCall();
+  const state = await loadPoolStateForCall(options?.ignoreEnabled === true);
   if (!state) {
     throw new RelayCoreError("UNSUPPORTED_MODEL", "Relay Free Pool is not enabled or has no members \u2014 set it up with `relay-ai pool` or relay-ai ui.", { routeId: RELAY_POOL_ROUTE_ID });
   }
@@ -3275,7 +3275,7 @@ async function generateFromStream(parts) {
   };
 }
 function createRelayPoolModel(options) {
-  const state = loadPoolState();
+  const state = loadPoolState(void 0, void 0, options?.ignoreEnabled === true);
   const members = state ? servableMembers(state, Date.now(), false) : [];
   if (!state || members.length === 0) {
     throw new RelayCoreError("UNSUPPORTED_MODEL", "Relay Free Pool is not enabled or has no usable members \u2014 set it up with `relay-ai pool` or relay-ai ui.", { routeId: RELAY_POOL_ROUTE_ID });
@@ -3340,13 +3340,7 @@ export {
   buildCatalogFile,
   buildAppCatalogFile,
   serializeCatalog,
-  MAX_POOL_ATTEMPTS,
-  PoolAttemptError,
   requestFingerprint,
-  dispatchFreePool,
-  lazyPoolRoute,
-  sdkPoolRoute,
-  poolRequestFitsWindow,
   estimateValueChars,
   estimateInputItemChars,
   estimateResponsesBodyChars,
@@ -3373,12 +3367,17 @@ export {
   streamCompactionResponse,
   overflowError,
   writeResponsesErrorStream,
+  poolRequestFitsWindow,
   poolRouteKey,
+  lazyPoolRoute,
+  PoolAttemptError,
+  sdkPoolRoute,
   poolMemberEffort,
   poolOutputCap,
   POOL_MAX_TOOLS,
   translatedEffortClaim,
   prepareCodexPoolRoutes,
+  dispatchFreePool,
   FREE_POOL_MODEL_ID,
   FREE_POOL_PROVIDER_ID,
   DEFAULT_POOL_LIMITS,
@@ -3405,4 +3404,4 @@ export {
   parseRelayRouteId,
   loadCoreRegistry
 };
-//# sourceMappingURL=chunk-6PQQ4LAX.js.map
+//# sourceMappingURL=chunk-TFZ4IHSN.js.map

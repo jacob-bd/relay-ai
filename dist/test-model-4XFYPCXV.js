@@ -2,16 +2,17 @@
 import {
   setContextWindowOverride,
   setModelNotChat
-} from "./chunk-MUL56HX6.js";
+} from "./chunk-7CHQ4LKN.js";
 import {
   createRelayModel
-} from "./chunk-YRPIWLVH.js";
-import "./chunk-6PQQ4LAX.js";
+} from "./chunk-GNGAMRA3.js";
+import "./chunk-TFZ4IHSN.js";
 import {
   TEST_MAX_OUTPUT_TOKENS,
-  cachedModelToLocal
-} from "./chunk-VX6SGCM7.js";
-import "./chunk-CFSNPQWS.js";
+  cachedModelToLocal,
+  poolFailure
+} from "./chunk-SDRVP6UH.js";
+import "./chunk-XRM7HLAA.js";
 import "./chunk-5HGLQHX6.js";
 import "./chunk-UR4QFFSQ.js";
 import {
@@ -20,11 +21,11 @@ import {
 import {
   getProviderModels,
   loadRegistry
-} from "./chunk-YXREHFK3.js";
+} from "./chunk-2UFMXYWV.js";
 import {
   providerKind,
   resolveProviderCredential
-} from "./chunk-7RSJEDK4.js";
+} from "./chunk-YFZNEGUV.js";
 import "./chunk-6DCEGHZH.js";
 import "./chunk-W32XKRNU.js";
 import "./chunk-XEH2JMTL.js";
@@ -164,12 +165,22 @@ async function testModel(providerId, modelId, signal, opts) {
     abortSignal.throwIfAborted();
     const result = streamText({
       model,
-      prompt: opts?.withoutTools ? "Say OK." : 'Say OK, then call relay_pool_probe with value "ok".',
+      prompt: opts?.withoutTools ? "Say OK." : 'Call relay_pool_probe with value "ok". Do not perform any other action.',
       maxOutputTokens: TEST_MAX_OUTPUT_TOKENS,
-      ...opts?.withoutTools ? {} : { tools: { relay_pool_probe: tool({
-        description: "Harmless capability check; never executed.",
-        inputSchema: jsonSchema({ type: "object", properties: { value: { type: "string", enum: ["ok"] } }, required: ["value"], additionalProperties: false })
-      }) } },
+      ...opts?.withoutTools ? {} : {
+        ...opts?.autoToolChoice ? {} : { toolChoice: "required" },
+        tools: {
+          relay_pool_probe: tool({
+            description: "Harmless capability check; never executed.",
+            inputSchema: jsonSchema({
+              type: "object",
+              properties: { value: { type: "string", enum: ["ok"] } },
+              required: ["value"],
+              additionalProperties: false
+            })
+          })
+        }
+      },
       maxRetries: 0,
       abortSignal,
       onError: () => {
@@ -203,7 +214,11 @@ async function testModel(providerId, modelId, signal, opts) {
     rememberChatResult(providerId, modelId, true);
     return { ok: true, latencyMs, notChat: false, toolsPassed };
   } catch (error) {
-    if (!opts?.withoutTools && !abortSignal.aborted && /does not support tools|tools? (?:are|is) not supported/i.test(errorText(error))) {
+    const errTxt = errorText(error);
+    if (!opts?.withoutTools && !opts?.autoToolChoice && !abortSignal.aborted && /tool_choice|auto tool choice|choice.*required|required.*tool/i.test(errTxt)) {
+      return testModel(providerId, modelId, signal, { autoToolChoice: true });
+    }
+    if (!opts?.withoutTools && !abortSignal.aborted && /does not support tools|tools? (?:are|is) not supported|tool calling/i.test(errTxt)) {
       return testModel(providerId, modelId, signal, { withoutTools: true });
     }
     if (!abortSignal.aborted && isNotChatRefusal(error)) {
@@ -212,9 +227,15 @@ async function testModel(providerId, modelId, signal, opts) {
     }
     const status = upstreamHttpStatus(error, "");
     const text = errorText(error);
-    const message = abortSignal.aborted ? "No response within 30 seconds, or the test was cancelled." : status === 404 && /unsupported_path|not an? (?:\w+ )?surface/i.test(text) ? "This provider's endpoint doesn't serve this model. Try the same model on your other provider for this gateway (e.g. the OpenAI-style one)." : status === 403 && /subscription .* does not include model/i.test(text) ? "Your plan doesn't include this model." : status === 401 || status === 403 ? "Access denied. Check the provider key or sign in again." : status === 429 ? "Provider rate limit reached. Try again later." : status === 402 ? "Provider quota or credits exhausted." : "The model could not respond. Check the provider credentials and connection, then try again.";
+    const classified = abortSignal.aborted ? void 0 : poolFailure(error);
+    const message = abortSignal.aborted ? "No response within 30 seconds, or the test was cancelled." : classified?.kind === "disabled" && classified.note ? `Model unavailable: ${classified.note}.` : status === 404 && /unsupported_path|not an? (?:\w+ )?surface/i.test(text) ? "This provider's endpoint doesn't serve this model. Try the same model on your other provider for this gateway (e.g. the OpenAI-style one)." : status === 403 && /subscription .* does not include model/i.test(text) ? "Your plan doesn't include this model." : status === 401 || status === 403 ? "Access denied. Check the provider key or sign in again." : status === 429 ? "Provider rate limit reached. Try again later." : status === 402 ? "Provider quota or credits exhausted." : "The model could not respond. Check the provider credentials and connection, then try again.";
     const transient = abortSignal.aborted || status === 429 || status === 402 || status === void 0 || typeof status === "number" && status >= 500;
-    return { ok: false, error: message, ...transient ? { transient: true } : {} };
+    return {
+      ok: false,
+      error: message,
+      ...transient ? { transient: true } : {},
+      ...classified ? { poolFailure: { kind: classified.kind, ...classified.note ? { note: classified.note } : {}, ...classified.status ? { status: classified.status } : {} } } : {}
+    };
   }
 }
 export {
@@ -226,4 +247,4 @@ export {
   probeModel,
   testModel
 };
-//# sourceMappingURL=test-model-64LXO6XY.js.map
+//# sourceMappingURL=test-model-4XFYPCXV.js.map
