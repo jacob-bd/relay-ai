@@ -13,14 +13,12 @@ import {
   buildHttpProxyRoutes,
   buildVertexRuntimeConfig,
   checkForUpdates,
-  checkVertexModelAccess,
   claudeAppSupported,
   codexAppInstallHint,
   codexAppSupported,
   createGatewayModelCatalog,
   estimateAnthropicInputTokens,
   favoriteProviderDisplayName,
-  filterVertexModelsByAccess,
   findBinaryOnPath,
   findEmbeddedCodexBinary,
   fmtCommand,
@@ -77,13 +75,13 @@ import {
   supportsClaudeTransparentMode,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-YSFSIGVJ.js";
+} from "./chunk-T556IEMV.js";
 import {
   extractApiKey,
   readBody,
   sendJson,
   warnDisabledPoolMembers
-} from "./chunk-JZ53BAL4.js";
+} from "./chunk-L6Q7EJAR.js";
 import {
   printUiUrlLast
 } from "./chunk-4BVKM3FX.js";
@@ -94,10 +92,12 @@ import {
   addCustomEndpointProvider,
   addOpencodeCloudFromApiKey,
   applySystemCaTrust,
+  checkVertexModelAccess,
   customEndpointKind,
   endpointModelTimeoutMs,
   fetchAnthropicModels,
   fetchTemplateModels,
+  filterVertexModelsByAccess,
   isSystemCaActive,
   isSystemCaSupported,
   refreshAllProviderModels,
@@ -111,7 +111,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-7CHQ4LKN.js";
+} from "./chunk-JEYZXEGX.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -172,7 +172,7 @@ import {
   translateResponsesRequest,
   writeResponsesCreated,
   writeResponsesErrorStream
-} from "./chunk-TFZ4IHSN.js";
+} from "./chunk-GLUGR6ZF.js";
 import {
   OPENCODE_SESSION_HEADER,
   PoolHealthStore,
@@ -211,30 +211,25 @@ import {
   retryPoolFailure,
   routableModelsForTarget,
   toOAuthRegistryId
-} from "./chunk-SDRVP6UH.js";
+} from "./chunk-ZX7O6SMV.js";
 import {
   effectiveProviderBaseUrl,
   isLikelyPlaceholderKey,
   resolveProviderTemplate,
   resolveRefreshCredential,
   syntheticTemplate
-} from "./chunk-XRM7HLAA.js";
+} from "./chunk-FPHPPVGG.js";
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-KDJECC23.js";
-import "./chunk-ZYQ7HBAF.js";
+} from "./chunk-PTSGBTZL.js";
+import "./chunk-2N6RDB6K.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
-import {
-  formatUpstreamError,
-  formatUpstreamErrorTrace,
-  upstreamHttpStatus
-} from "./chunk-52CL3M64.js";
 import {
   EFFORT_RANK,
   VERTEX_ANTHROPIC_PROVIDER_ID,
@@ -246,6 +241,8 @@ import {
   currentPoolReceipt,
   deepMergeProviderOptions,
   effortProviderOptions,
+  formatUpstreamError,
+  formatUpstreamErrorTrace,
   generateTextStreamingIfRequired,
   getAgentProviderModels,
   getAntigravityDebugLogPath,
@@ -294,12 +291,13 @@ import {
   supportsManualModels,
   thinkingProviderOptions,
   uniqueProviderName,
+  upstreamHttpStatus,
   validateProviderName,
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   withAnthropicThinkingDisplay,
   writeSecureLogLine
-} from "./chunk-2UFMXYWV.js";
+} from "./chunk-LNVSG2SO.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -337,7 +335,7 @@ import {
   saveToCredentialStore,
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth
-} from "./chunk-YFZNEGUV.js";
+} from "./chunk-RCX3PCUB.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -2609,6 +2607,9 @@ async function runProvidersRefreshModels(providerId) {
     const diff = result.previousModelCount === void 0 ? 0 : (result.modelCount ?? 0) - result.previousModelCount;
     const diffStr = result.previousModelCount === void 0 ? "" : diff > 0 ? ` (+${diff})` : diff < 0 ? ` (${diff})` : "";
     p8.log.success(`${result.name}: ${result.modelCount} model${result.modelCount === 1 ? "" : "s"} updated${diffStr}.`);
+    if (result.notice) {
+      p8.log.info(result.notice);
+    }
     if (result.reason) {
       p8.log.warn(result.reason);
     }
@@ -2627,6 +2628,9 @@ async function runProvidersRefreshModels(providerId) {
       const diff = r.previousModelCount === void 0 ? 0 : (r.modelCount ?? 0) - r.previousModelCount;
       const diffStr = r.previousModelCount === void 0 ? "" : diff > 0 ? ` (+${diff})` : diff < 0 ? ` (${diff})` : "";
       p8.log.info(`  ${r.name}: ${r.modelCount} model${r.modelCount === 1 ? "" : "s"}${diffStr}`);
+      if (r.notice) {
+        p8.log.info(`  ${r.notice}`);
+      }
       if (r.reason) {
         p8.log.warn(`  ${r.reason}`);
       }
@@ -3314,7 +3318,7 @@ async function runProviderDetail(id) {
       detailOptions.push({ value: "vertex-reset", label: "Reset to Relay's latest model list", hint: "Follows future Relay updates" });
     }
   }
-  if (supportsManualModels(provider) && provider.enabled) {
+  if (!vertex && supportsManualModels(provider) && provider.enabled) {
     detailOptions.push({ value: "add-model", label: "Add model manually", hint: "Test an exact model ID, then save it" });
   }
   if (provider.manualModels?.length) {
@@ -3484,7 +3488,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-4XFYPCXV.js");
+      const { testModel } = await import("./test-model-WK3H35E4.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -19095,7 +19099,7 @@ Options:
       return 0;
     }
     if (parsed.uiAction === "stop") {
-      const { stopUiServer } = await import("./ui-command-ALJYNMAQ.js");
+      const { stopUiServer } = await import("./ui-command-HFWPXFZ7.js");
       const result = await stopUiServer();
       if (result.stopped) {
         console.log(`
@@ -19108,11 +19112,11 @@ Options:
 `);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-ALJYNMAQ.js");
+    const { runUiCommand } = await import("./ui-command-HFWPXFZ7.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode, background: parsed.uiBackground });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-7Z3W3GZG.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-QYKGZ63A.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

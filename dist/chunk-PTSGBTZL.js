@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import {
   translateRequest
-} from "./chunk-ZYQ7HBAF.js";
+} from "./chunk-2N6RDB6K.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -9,15 +9,18 @@ import {
   contextWindowError,
   createLanguageModel,
   getProviderModels,
+  isVertexAnthropicProvider,
   loadRegistry,
   localIsoTimestamp,
   modelIdError,
   saveRegistry,
-  supportsManualModels
-} from "./chunk-2UFMXYWV.js";
+  supportsManualModels,
+  vertexAnthropicSetupError,
+  vertexModelDisplayName
+} from "./chunk-LNVSG2SO.js";
 import {
   resolveProviderCredential
-} from "./chunk-YFZNEGUV.js";
+} from "./chunk-RCX3PCUB.js";
 
 // src/registry/validate-manual-model.ts
 import { randomUUID } from "crypto";
@@ -106,19 +109,24 @@ async function addManualModel(input) {
   const registry = loadRegistry();
   const provider = registry.providers.find((p) => p.id === input.providerId);
   if (!provider || !provider.enabled) return { ok: false, error: "Provider not found or disabled." };
-  if (!supportsManualModels(provider)) return { ok: false, error: "Manual models are supported for API-key OpenAI-compatible, Anthropic, OpenAI and OpenRouter providers." };
+  if (!supportsManualModels(provider)) return { ok: false, error: "Manual models are supported for API-key OpenAI-compatible, Anthropic, OpenAI, OpenRouter and Vertex AI providers." };
   if (getProviderModels(provider).some((m) => m.id === id)) return { ok: false, error: "This model ID is already in the provider catalog." };
+  const isVertex = isVertexAnthropicProvider(provider);
+  if (isVertex) {
+    const setupError = vertexAnthropicSetupError();
+    if (setupError) return { ok: false, error: `${setupError.error} ${setupError.hint}` };
+  }
   let key = "";
   try {
     if (provider.api.url) {
       const checked = await validateCustomEndpointUrl(provider.api.url, { allowInsecureLocal: true });
       if (!checked.ok) return { ok: false, error: checked.error ?? "Invalid provider URL." };
     }
-    key = await resolveProviderCredential(provider.id, provider.authRef) ?? "";
-    if (!key && provider.authType !== "none") return { ok: false, error: "No stored API key. Configure this provider before adding a model." };
+    key = isVertex ? "" : await resolveProviderCredential(provider.id, provider.authRef) ?? "";
+    if (!isVertex && !key && provider.authType !== "none") return { ok: false, error: "No stored API key. Configure this provider before adding a model." };
     const before = fingerprint(provider);
     await validateManualModel(provider, id, key);
-    if ((await resolveProviderCredential(provider.id, provider.authRef) ?? "") !== key) {
+    if (!isVertex && (await resolveProviderCredential(provider.id, provider.authRef) ?? "") !== key) {
       return { ok: false, error: "Provider credential changed during validation. Test again." };
     }
     const latest = loadRegistry();
@@ -127,7 +135,7 @@ async function addManualModel(input) {
     if (getProviderModels(current).some((m) => m.id === id)) return { ok: false, error: "This model was added while validation was running." };
     const model = {
       id,
-      name: input.displayName?.trim() || id,
+      name: input.displayName?.trim() || (isVertex ? vertexModelDisplayName(id) : id),
       upstreamModelId: id,
       modelFormat: provider.api.npm === "@ai-sdk/anthropic" ? "anthropic" : "openai",
       source: "manual",
@@ -156,4 +164,4 @@ export {
   addManualModel,
   removeManualModel
 };
-//# sourceMappingURL=chunk-KDJECC23.js.map
+//# sourceMappingURL=chunk-PTSGBTZL.js.map

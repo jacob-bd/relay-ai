@@ -472,7 +472,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.22.11",
+  version: "0.22.12",
   publishConfig: {
     access: "public"
   },
@@ -2534,7 +2534,8 @@ var MANUAL_MODEL_PACKAGES = /* @__PURE__ */ new Set([
   "@ai-sdk/openai-compatible",
   "@ai-sdk/openai",
   "@ai-sdk/anthropic",
-  "@openrouter/ai-sdk-provider"
+  "@openrouter/ai-sdk-provider",
+  VERTEX_ANTHROPIC_NPM
 ]);
 function supportsManualModels(provider) {
   return provider.authType !== "oauth" && !["zen", "go", "antigravity"].includes(provider.templateId) && MANUAL_MODEL_PACKAGES.has(provider.api.npm ?? "");
@@ -2566,11 +2567,16 @@ function applyFreeMarks(provider, models) {
   });
 }
 function getProviderModels(provider) {
-  if (isVertexAnthropicProvider(provider)) return applyFreeMarks(provider, applyContextWindowOverrides(provider, vertexAnthropicCachedModels()));
-  const models = new Map((provider.modelsCache?.models ?? []).map((model) => [model.id, model]));
+  const isVertex = isVertexAnthropicProvider(provider);
+  const base = isVertex ? vertexAnthropicCachedModels() : provider.modelsCache?.models ?? [];
+  const models = new Map(base.map((model) => [model.id, model]));
   if (supportsManualModels(provider)) {
     for (const model of provider.manualModels ?? []) {
-      models.set(model.id, { ...model, modelFormat: provider.api.npm === "@ai-sdk/anthropic" ? "anthropic" : "openai" });
+      models.set(model.id, {
+        ...model,
+        ...isVertex ? { npm: VERTEX_ANTHROPIC_NPM, family: "claude", brand: "Anthropic" } : {},
+        modelFormat: provider.api.npm === "@ai-sdk/anthropic" ? "anthropic" : "openai"
+      });
     }
   }
   return applyFreeMarks(provider, applyContextWindowOverrides(provider, [...models.values()]));
@@ -8553,7 +8559,7 @@ function wrapPoolError(error) {
 }
 var sessions = new PoolSessionRoutes();
 async function memberModel(routeId, context) {
-  const { createRelayModel: createRelayModel2 } = await import("./model-SWDKC77Y.js");
+  const { createRelayModel: createRelayModel2 } = await import("./model-IIMOFIK6.js");
   return createRelayModel2(routeId, {
     sessionId: context.sessionId,
     ...context.options?.onDebug ? { onDebug: context.options.onDebug } : {},
@@ -9154,4 +9160,4 @@ export {
   loadCoreRegistry,
   listRelayModels
 };
-//# sourceMappingURL=chunk-S2HN3KAP.js.map
+//# sourceMappingURL=chunk-2A2BALEN.js.map

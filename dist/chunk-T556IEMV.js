@@ -3,7 +3,7 @@ import {
   extractApiKey,
   readBody,
   sendJson
-} from "./chunk-JZ53BAL4.js";
+} from "./chunk-L6Q7EJAR.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -11,10 +11,10 @@ import {
   fetchClinePassModels,
   fetchCommandCodeModels,
   fetchTemplateModels,
-  filterModelsByAvailability,
+  filterVertexModelsByAccess,
   refreshProviderModels,
   validateClinePassApiKey
-} from "./chunk-7CHQ4LKN.js";
+} from "./chunk-JEYZXEGX.js";
 import {
   DEFAULT_POOL_LIMITS,
   POOL_MAX_TOOLS,
@@ -30,7 +30,7 @@ import {
   requestFingerprint,
   sdkPoolRoute,
   translatedEffortClaim
-} from "./chunk-TFZ4IHSN.js";
+} from "./chunk-GLUGR6ZF.js";
 import {
   PoolHealthStore,
   describePoolFailure,
@@ -51,7 +51,7 @@ import {
   resolveLocalProviderApiKey,
   retryPoolFailure,
   toOAuthRegistryId
-} from "./chunk-SDRVP6UH.js";
+} from "./chunk-ZX7O6SMV.js";
 import {
   SubagentRouteRegistry,
   anthropicEffortFromRequest,
@@ -61,15 +61,10 @@ import {
   streamAnthropicResponse,
   translateRequest,
   writeAnthropicStream
-} from "./chunk-ZYQ7HBAF.js";
-import {
-  anthropicErrorType,
-  formatUpstreamError,
-  upstreamHttpStatus
-} from "./chunk-52CL3M64.js";
+} from "./chunk-2N6RDB6K.js";
 import {
   UpstreamUnreachableError,
-  VERTEX_ANTHROPIC_PROVIDER_ID,
+  anthropicErrorType,
   buildPricingIndex,
   classifyFreeStatus,
   createLanguageModel,
@@ -78,6 +73,7 @@ import {
   enrichModelsForProviderPricing,
   enrichPricingAsync,
   fetchWithOAuthRetry,
+  formatUpstreamError,
   generateTextStreamingIfRequired,
   getEnvServerPassword,
   getProxyDebugLogPath,
@@ -121,10 +117,11 @@ import {
   silenceSdkWarnings,
   splitToolUseId,
   uniqueProviderName,
+  upstreamHttpStatus,
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-2UFMXYWV.js";
+} from "./chunk-LNVSG2SO.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -167,7 +164,7 @@ import {
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth,
   tokensToStoredCredential
-} from "./chunk-YFZNEGUV.js";
+} from "./chunk-RCX3PCUB.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -4543,8 +4540,8 @@ async function serveOpenAiPool(req, res, options, body, plog) {
   let contentCommitted = false;
   try {
     const [{ createRelayModel }, { RELAY_POOL_ROUTE_ID }] = await Promise.all([
-      import("./model-24VYMZUU.js"),
-      import("./pool-model-6KDBZJHQ.js")
+      import("./model-5DN2F3IB.js"),
+      import("./pool-model-WF7J7MUZ.js")
     ]);
     const languageModel = await createRelayModel(RELAY_POOL_ROUTE_ID, { sessionId, onDebug: plog });
     const params = translateOpenAiRequest(body);
@@ -5711,75 +5708,6 @@ async function readOAuthAccountLabel(provider) {
 
 // src/registry/add-template.ts
 init_provider_templates();
-
-// src/registry/vertex-model-check.ts
-import { generateText } from "ai";
-function errorStatus(err) {
-  const rec = err;
-  return rec?.statusCode ?? rec?.lastError?.statusCode ?? 0;
-}
-async function checkVertexModelAccess(modelId) {
-  try {
-    const model = await createLanguageModel({
-      npm: VERTEX_ANTHROPIC_NPM,
-      modelId,
-      apiKey: "",
-      providerId: VERTEX_ANTHROPIC_PROVIDER_ID
-    });
-    await generateText({
-      model,
-      prompt: "Reply with exactly OK.",
-      maxOutputTokens: 16,
-      maxRetries: 0,
-      abortSignal: AbortSignal.timeout(6e4)
-    });
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, status: errorStatus(err), error: formatUpstreamError(err) };
-  }
-}
-function classifyVertexAccess(status, message) {
-  if (status === 200) return "available";
-  if (status === 404) return { verdict: "unavailable", detail: "not found or not enabled for your project" };
-  if (status === 400 && /allowedModels|Organization Policy/i.test(message)) {
-    return { verdict: "unavailable", detail: "blocked by your organization's model policy" };
-  }
-  if (status === 401 || status === 403) return { verdict: "abort", detail: message };
-  return "unknown";
-}
-async function filterVertexModelsByAccess(entries, check = checkVertexModelAccess) {
-  const reasons = /* @__PURE__ */ new Map();
-  const confirmed = /* @__PURE__ */ new Set();
-  const candidates = entries.map((entry) => ({
-    id: entry.id,
-    name: entry.display_name,
-    upstreamModelId: entry.upstream_id ?? entry.id,
-    modelFormat: "openai"
-  }));
-  const outcome = await filterModelsByAvailability(candidates, {
-    label: "vertex-access",
-    concurrency: 4,
-    probe: async (model) => {
-      const access = await check(model.upstreamModelId);
-      const status = access.ok ? 200 : access.status ?? 0;
-      if (access.ok) confirmed.add(model.id);
-      const verdict = classifyVertexAccess(status, access.error ?? "");
-      if (typeof verdict === "object" && verdict.verdict === "unavailable" && verdict.detail) reasons.set(model.id, verdict.detail);
-      return { status, body: access.error ?? "" };
-    },
-    classify: (status, body) => classifyVertexAccess(status, String(body))
-  });
-  if (outcome.aborted) return { allowed: entries, removed: [], confirmedIds: [], aborted: true, abortDetail: outcome.abortDetail };
-  const removedIds = new Set(outcome.removedIds);
-  return {
-    allowed: entries.filter((entry) => !removedIds.has(entry.id)),
-    removed: entries.filter((entry) => removedIds.has(entry.id)).map((entry) => ({ entry, reason: reasons.get(entry.id) ?? "not available to your project" })),
-    confirmedIds: entries.filter((entry) => confirmed.has(entry.id)).map((entry) => entry.id),
-    aborted: false
-  };
-}
-
-// src/registry/add-template.ts
 async function probeTemplatePackage(template) {
   if (!template.supported) return template.unsupportedReason ?? "Provider is not supported yet.";
   if (!template.npm) return "Template is missing an SDK package.";
@@ -7644,8 +7572,6 @@ export {
   removeFavorite,
   favoriteProviderDisplayName,
   readOAuthAccountLabel,
-  checkVertexModelAccess,
-  filterVertexModelsByAccess,
   addProviderFromTemplate,
   getRelayAccountUsage,
   readRelayAccountUsage,
@@ -7671,4 +7597,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-YSFSIGVJ.js.map
+//# sourceMappingURL=chunk-T556IEMV.js.map

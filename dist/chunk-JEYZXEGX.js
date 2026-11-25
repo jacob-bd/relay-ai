@@ -13,7 +13,7 @@ import {
   resolveRefreshCredential,
   skipWithCachedModels,
   syntheticTemplate
-} from "./chunk-XRM7HLAA.js";
+} from "./chunk-FPHPPVGG.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -21,15 +21,18 @@ import {
   MAX_CONTEXT_WINDOW_OVERRIDE,
   MIN_CONTEXT_WINDOW_OVERRIDE,
   MODEL_KINDS,
+  VERTEX_ANTHROPIC_PROVIDER_ID,
   applyModelsDevContextWindows,
   buildPricingIndex,
   classifyFreeStatus,
+  createLanguageModel,
   customProviderId,
   enrichModelsForProviderPricing,
   enrichPricingAsync,
   fetchModelsDevCache,
   findModelsDevModel,
   findProviderNameConflict,
+  formatUpstreamError,
   getAgentProviderModels,
   getProviderDebugLogPath,
   getProviderModels,
@@ -53,9 +56,10 @@ import {
   uniqueProviderName,
   validateProviderName,
   vertexAnthropicCachedModels,
+  vertexAnthropicSetupError,
   wireApiKey,
   writeSecureLogLine
-} from "./chunk-2UFMXYWV.js";
+} from "./chunk-LNVSG2SO.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -64,6 +68,7 @@ import {
   CLINE_PASS_HOST,
   CLINE_PASS_SDK_BASE_URL,
   CLINE_PASS_VALIDATION_URL,
+  VERTEX_ANTHROPIC_NPM,
   deleteProviderCredential,
   enrichGithubCopilotOAuthProviderData,
   fetchClaudeCodeModels,
@@ -77,11 +82,17 @@ import {
   resolveProviderOAuthProviderData,
   saveProviderCredential,
   saveToCredentialStore
-} from "./chunk-YFZNEGUV.js";
+} from "./chunk-RCX3PCUB.js";
 import {
   getTemplateById,
   init_provider_templates
 } from "./chunk-6DCEGHZH.js";
+import {
+  DEFAULT_VERTEX_MODELS,
+  loadVertexModelEntries,
+  resolveVertexProject,
+  saveVertexModelEntries
+} from "./chunk-W32XKRNU.js";
 
 // src/registry/builtins.ts
 function zenRegistryStub(subscriptionFilter, account) {
@@ -1344,6 +1355,144 @@ function buildXaiOAuthModels() {
   });
 }
 
+// src/registry/vertex-model-check.ts
+import { generateText } from "ai";
+function errorStatus(err) {
+  const rec = err;
+  return rec?.statusCode ?? rec?.lastError?.statusCode ?? 0;
+}
+async function checkVertexModelAccess(modelId) {
+  try {
+    const model = await createLanguageModel({
+      npm: VERTEX_ANTHROPIC_NPM,
+      modelId,
+      apiKey: "",
+      providerId: VERTEX_ANTHROPIC_PROVIDER_ID
+    });
+    await generateText({
+      model,
+      prompt: "Reply with exactly OK.",
+      maxOutputTokens: 16,
+      maxRetries: 0,
+      abortSignal: AbortSignal.timeout(6e4)
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, status: errorStatus(err), error: formatUpstreamError(err) };
+  }
+}
+function classifyVertexAccess(status, message) {
+  if (status === 200) return "available";
+  if (status === 404) return { verdict: "unavailable", detail: "not found or not enabled for your project" };
+  if (status === 400 && /allowedModels|Organization Policy/i.test(message)) {
+    return { verdict: "unavailable", detail: "blocked by your organization's model policy" };
+  }
+  if (status === 401 || status === 403) return { verdict: "abort", detail: message };
+  return "unknown";
+}
+async function filterVertexModelsByAccess(entries2, check = checkVertexModelAccess) {
+  const reasons = /* @__PURE__ */ new Map();
+  const confirmed = /* @__PURE__ */ new Set();
+  const candidates = entries2.map((entry) => ({
+    id: entry.id,
+    name: entry.display_name,
+    upstreamModelId: entry.upstream_id ?? entry.id,
+    modelFormat: "openai"
+  }));
+  const outcome = await filterModelsByAvailability(candidates, {
+    label: "vertex-access",
+    concurrency: 4,
+    probe: async (model) => {
+      const access = await check(model.upstreamModelId);
+      const status = access.ok ? 200 : access.status ?? 0;
+      if (access.ok) confirmed.add(model.id);
+      const verdict = classifyVertexAccess(status, access.error ?? "");
+      if (typeof verdict === "object" && verdict.verdict === "unavailable" && verdict.detail) reasons.set(model.id, verdict.detail);
+      return { status, body: access.error ?? "" };
+    },
+    classify: (status, body) => classifyVertexAccess(status, String(body))
+  });
+  if (outcome.aborted) return { allowed: entries2, removed: [], confirmedIds: [], aborted: true, abortDetail: outcome.abortDetail };
+  const removedIds = new Set(outcome.removedIds);
+  return {
+    allowed: entries2.filter((entry) => !removedIds.has(entry.id)),
+    removed: entries2.filter((entry) => removedIds.has(entry.id)).map((entry) => ({ entry, reason: reasons.get(entry.id) ?? "not available to your project" })),
+    confirmedIds: entries2.filter((entry) => confirmed.has(entry.id)).map((entry) => entry.id),
+    aborted: false
+  };
+}
+function insertInDefaultOrder(kept, added) {
+  const rank = new Map(DEFAULT_VERTEX_MODELS.map((m, i) => [m.id, i]));
+  const next = [...kept];
+  for (const entry of added) {
+    const entryRank = rank.get(entry.id) ?? Number.POSITIVE_INFINITY;
+    const insertAt = next.findIndex((item) => (rank.get(item.id) ?? Number.POSITIVE_INFINITY) > entryRank);
+    if (insertAt >= 0) next.splice(insertAt, 0, entry);
+    else next.push(entry);
+  }
+  return next;
+}
+async function refreshVertexModels(check = checkVertexModelAccess) {
+  const setupError = vertexAnthropicSetupError();
+  if (setupError) {
+    return {
+      ok: false,
+      error: `${setupError.error} ${setupError.hint}`,
+      added: [],
+      removed: [],
+      unchecked: []
+    };
+  }
+  const current = loadVertexModelEntries();
+  const extras = DEFAULT_VERTEX_MODELS.filter((d) => !current.some((c) => c.id === d.id));
+  const outcome = await filterVertexModelsByAccess([...current, ...extras], check);
+  if (outcome.aborted) {
+    return {
+      ok: false,
+      error: outcome.abortDetail ?? "Vertex AI rejected the request.",
+      added: [],
+      removed: [],
+      unchecked: []
+    };
+  }
+  const currentIds = new Set(current.map((c) => c.id));
+  const removed = outcome.removed.filter((r) => currentIds.has(r.entry.id));
+  const removedIds = new Set(removed.map((r) => r.entry.id));
+  const kept = current.filter((c) => !removedIds.has(c.id));
+  const confirmedIds = new Set(outcome.confirmedIds);
+  const added = extras.filter((e) => confirmedIds.has(e.id));
+  const unchecked = kept.filter((m) => !confirmedIds.has(m.id));
+  const next = insertInDefaultOrder(kept, added);
+  if (next.length === 0) {
+    return {
+      ok: false,
+      error: `None of the ${current.length + extras.length} Claude models are available to project ${resolveVertexProject() ?? "(not set)"}.`,
+      added: [],
+      removed,
+      unchecked: []
+    };
+  }
+  if (added.length > 0 || removed.length > 0) {
+    saveVertexModelEntries(next);
+  }
+  const noticeParts = [];
+  if (added.length > 0) {
+    noticeParts.push(`Added ${added.map((m) => m.display_name).join(", ")}.`);
+  }
+  if (removed.length > 0) {
+    noticeParts.push(`Removed ${removed.map((r) => `${r.entry.display_name} (${r.reason})`).join(", ")}.`);
+  }
+  const warning = unchecked.length > 0 ? `Couldn't confirm ${unchecked.map((m) => m.display_name).join(", ")} right now (rate limit or outage) \u2014 kept in your list.` : void 0;
+  return {
+    ok: true,
+    added,
+    removed,
+    unchecked,
+    ...noticeParts.length > 0 ? { notice: noticeParts.join(" ") } : {},
+    ...warning ? { warning } : {}
+  };
+}
+
 // src/registry/refresh-models.ts
 function modelInfoToCached(m, npm, apiUrl) {
   const freeStatus = classifyFreeStatus({ model: m });
@@ -1729,10 +1878,22 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
     let baseUrl;
     let oauthFallbackReason;
     let incompleteReason;
+    let refreshNotice;
     if (source === "zen-go-api") {
       models = await refreshZenGoProvider(provider);
     } else if (source === "vertex-models-file") {
+      const refreshed = await refreshVertexModels();
+      if (!refreshed.ok) {
+        return {
+          id: provider.id,
+          name: provider.name,
+          ok: false,
+          reason: refreshed.error ?? "Vertex AI model refresh failed."
+        };
+      }
       models = vertexAnthropicCachedModels();
+      refreshNotice = refreshed.notice;
+      incompleteReason = refreshed.warning;
     } else if (source === "commandcode") {
       const ccBaseUrl = (provider.api.url ?? COMMANDCODE_BASE_URL).replace(/\/$/, "");
       try {
@@ -1858,7 +2019,8 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
       ok: true,
       modelCount: getAgentProviderModels(registry.providers.find((p) => p.id === providerId)).length,
       previousModelCount: provider.refreshedAt ? previousModelCount : void 0,
-      reason: [oauthFallbackReason, incompleteReason].filter(Boolean).join(" ") || void 0
+      reason: [oauthFallbackReason, incompleteReason].filter(Boolean).join(" ") || void 0,
+      ...refreshNotice ? { notice: refreshNotice } : {}
     };
   } catch (err) {
     return {
@@ -2254,11 +2416,12 @@ export {
   customEndpointKind,
   addCustomEndpointProvider,
   updateCustomEndpointProvider,
-  filterModelsByAvailability,
   fetchClinePassModels,
   validateClinePassApiKey,
   COMMANDCODE_BASE_URL,
   fetchCommandCodeModels,
+  checkVertexModelAccess,
+  filterVertexModelsByAccess,
   refreshProviderModels,
   refreshProviderModelsBatch,
   refreshAllProviderModels,
@@ -2279,4 +2442,4 @@ export {
   toggleProviderEnabled,
   setProviderServerUrl
 };
-//# sourceMappingURL=chunk-7CHQ4LKN.js.map
+//# sourceMappingURL=chunk-JEYZXEGX.js.map

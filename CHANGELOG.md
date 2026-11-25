@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.22.12] - 2026-11-25
+
+### Added
+
+- **Manual model support for Google Vertex AI (Claude) in the Web UI.** Enabled the Provider Catalog's **Add model manually** panel for Vertex AI using gcloud Application Default Credentials (no API key required), with automatic Claude display names when left blank and the same validation, `Manual` badge, and removal controls as other providers.
+
+### Fixed
+
+- **Vertex AI model refresh now detects newly allowed and revoked Claude models.** Refreshing Google Vertex AI (Claude) from the Web UI (**Refresh** / **Refresh all**), launch pickers, or `relay-ai providers refresh-models` now probes Vertex AI across your saved list plus any missing entries from Relay's built-in Claude lineup (such as Claude Haiku 5.5), automatically adding newly confirmed models and removing explicitly refused ones while leaving the saved list untouched on auth errors, rate limits, or outages. Added and removed models are reported in both CLI and Web UI refresh feedback.
+
 ## [0.22.11] - 2026-11-21
 
 ### Added
