@@ -1,11 +1,16 @@
 import type { CachedModel, ManualModel, RegistryProvider } from './types.js';
+import { VERTEX_ANTHROPIC_NPM } from '../constants.js';
 import { isVertexAnthropicProvider, vertexAnthropicCachedModels } from './vertex-anthropic.js';
 import { isLocalEndpointUrl, isOllamaCloudModelId } from '../free-models.js';
 import { providerKind } from './provider-kind.js';
 import { shouldHideModel } from '../model-compatibility.js';
 
 const MANUAL_MODEL_PACKAGES = new Set([
-  '@ai-sdk/openai-compatible', '@ai-sdk/openai', '@ai-sdk/anthropic', '@openrouter/ai-sdk-provider',
+  '@ai-sdk/openai-compatible',
+  '@ai-sdk/openai',
+  '@ai-sdk/anthropic',
+  '@openrouter/ai-sdk-provider',
+  VERTEX_ANTHROPIC_NPM,
 ]);
 
 export function supportsManualModels(provider: RegistryProvider): boolean {
@@ -51,11 +56,18 @@ function applyFreeMarks(provider: RegistryProvider, models: CachedModel[]): Cach
 
 /** Refresh owns modelsCache; the user's entries win collisions without duplicating IDs. */
 export function getProviderModels(provider: RegistryProvider): CachedModel[] {
-  if (isVertexAnthropicProvider(provider)) return applyFreeMarks(provider, applyContextWindowOverrides(provider, vertexAnthropicCachedModels()));
-  const models = new Map((provider.modelsCache?.models ?? []).map(model => [model.id, model]));
+  const isVertex = isVertexAnthropicProvider(provider);
+  const base = isVertex
+    ? vertexAnthropicCachedModels()
+    : (provider.modelsCache?.models ?? []);
+  const models = new Map(base.map(model => [model.id, model]));
   if (supportsManualModels(provider)) {
     for (const model of provider.manualModels ?? []) {
-      models.set(model.id, { ...model, modelFormat: provider.api.npm === '@ai-sdk/anthropic' ? 'anthropic' : 'openai' });
+      models.set(model.id, {
+        ...model,
+        ...(isVertex ? { npm: VERTEX_ANTHROPIC_NPM, family: 'claude', brand: 'Anthropic' } : {}),
+        modelFormat: provider.api.npm === '@ai-sdk/anthropic' ? 'anthropic' : 'openai',
+      });
     }
   }
   return applyFreeMarks(provider, applyContextWindowOverrides(provider, [...models.values()]));

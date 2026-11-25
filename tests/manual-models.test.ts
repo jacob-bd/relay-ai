@@ -4,12 +4,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadRegistry, saveRegistry } from '../src/registry/io.js';
 import { addManualModel, removeManualModel } from '../src/registry/manual-models.js';
-import { getProviderModels, parseManualModel } from '../src/registry/provider-models.js';
+import { getProviderModels, parseManualModel, supportsManualModels } from '../src/registry/provider-models.js';
 import { validateManualModel } from '../src/registry/validate-manual-model.js';
 import { resolveProviderCredential } from '../src/env.js';
+import { VERTEX_ANTHROPIC_NPM } from '../src/constants.js';
 import { materializeRegistry } from '../src/registry/materialize.js';
 import { listRelayModels } from '../src/core/catalog.js';
 import type { RegistryProvider } from '../src/registry/types.js';
+
+const vertexAdc = vi.hoisted(() => ({ present: true }));
+vi.mock('../src/vertex-env.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/vertex-env.js')>(),
+  hasApplicationDefaultCredentials: () => vertexAdc.present,
+}));
 
 vi.mock('../src/registry/validate-manual-model.js', () => ({ validateManualModel: vi.fn() }));
 vi.mock('../src/env.js', () => ({ resolveProviderCredential: vi.fn() }));
@@ -101,5 +108,72 @@ describe('manual models', () => {
   it('cannot remove a discovered model', () => {
     expect(removeManualModel('deepseek', 'listed').ok).toBe(false);
     expect(getProviderModels(loadRegistry().providers[0])).toHaveLength(1);
+  });
+
+  it('supports adding and removing manual models on Vertex AI without an API key', async () => {
+    vertexAdc.present = true;
+    vi.stubEnv('ANTHROPIC_VERTEX_PROJECT_ID', 'vertex-test-project');
+    vi.mocked(resolveProviderCredential).mockResolvedValue(null);
+    const vertex: RegistryProvider = {
+      id: 'vertex-anthropic',
+      templateId: 'vertex-anthropic',
+      name: 'Google Vertex AI (Claude)',
+      enabled: true,
+      authType: 'api',
+      authRef: 'keyring:provider:vertex-anthropic',
+      api: { npm: VERTEX_ANTHROPIC_NPM, url: '' },
+      addedAt: '2026-11-01T00:00:00Z',
+    };
+    saveRegistry({ schemaVersion: 1, providers: [vertex] });
+    expect(supportsManualModels(vertex)).toBe(true);
+
+    const added = await addManualModel({ providerId: 'vertex-anthropic', modelId: 'claude-fable-5-2' });
+    expect(added.ok).toBe(true);
+    expect(added.model).toMatchObject({ id: 'claude-fable-5-2', name: 'Claude Fable 5.2', source: 'manual' });
+    expect(validateManualModel).toHaveBeenCalledWith(expect.objectContaining({ id: 'vertex-anthropic' }), 'claude-fable-5-2', '');
+
+    const stored = loadRegistry().providers[0]!;
+    const models = getProviderModels(stored);
+    expect(models.find(m => m.id === 'claude-fable-5-2')).toMatchObject({
+      id: 'claude-fable-5-2',
+      name: 'Claude Fable 5.2',
+      npm: VERTEX_ANTHROPIC_NPM,
+      source: 'manual',
+    });
+
+    const runtime = materializeRegistry(loadRegistry(), () => 'vertex-adc', { agent: 'server' });
+    expect(runtime[0]?.models.some(m => m.id === 'claude-fable-5-2' && m.npm === VERTEX_ANTHROPIC_NPM)).toBe(true);
+
+    expect(removeManualModel('vertex-anthropic', 'claude-fable-5-2').ok).toBe(true);
+    expect(getProviderModels(loadRegistry().providers[0]!).some(m => m.id === 'claude-fable-5-2')).toBe(false);
+  });
+
+  it('rejects Vertex manual model addition when gcloud ADC or project is missing', async () => {
+    const vertex: RegistryProvider = {
+      id: 'vertex-anthropic',
+      templateId: 'vertex-anthropic',
+      name: 'Google Vertex AI (Claude)',
+      enabled: true,
+      authType: 'api',
+      authRef: 'keyring:provider:vertex-anthropic',
+      api: { npm: VERTEX_ANTHROPIC_NPM, url: '' },
+      addedAt: '2026-11-01T00:00:00Z',
+    };
+    saveRegistry({ schemaVersion: 1, providers: [vertex] });
+
+    vertexAdc.present = false;
+    vi.stubEnv('ANTHROPIC_VERTEX_PROJECT_ID', 'vertex-test-project');
+    const noAdc = await addManualModel({ providerId: 'vertex-anthropic', modelId: 'claude-fable-5-2' });
+    expect(noAdc.ok).toBe(false);
+    expect(noAdc.error).toContain('gcloud auth application-default login');
+
+    vertexAdc.present = true;
+    vi.stubEnv('ANTHROPIC_VERTEX_PROJECT_ID', '');
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+    vi.stubEnv('GOOGLE_VERTEX_PROJECT', '');
+    const noProject = await addManualModel({ providerId: 'vertex-anthropic', modelId: 'claude-fable-5-2' });
+    expect(noProject.ok).toBe(false);
+    expect(noProject.error).toContain('ANTHROPIC_VERTEX_PROJECT_ID');
+    expect(validateManualModel).not.toHaveBeenCalled();
   });
 });

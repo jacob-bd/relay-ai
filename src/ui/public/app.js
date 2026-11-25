@@ -1155,7 +1155,12 @@ function renderProviderModelBrowser() {
     renderProviders();
     renderProviderStats();
     renderProviderModelBrowser();
-    showToast(`${refreshed.count} models refreshed`);
+    const extra = [refreshed.notice, refreshed.warning].filter(Boolean).join(' ');
+    showToast(
+      extra ? `${refreshed.count} models refreshed · ${extra}` : `${refreshed.count} models refreshed`,
+      undefined,
+      extra ? 6000 : 2200,
+    );
   });
 }
 
@@ -2553,7 +2558,8 @@ function buildProviderBodyContent(provider) {
           return;
         }
       }
-      feedback.textContent = `✓ Catalog refreshed: ${result.count} models${savedMessage}`;
+      const extra = [result.notice, result.warning].filter(Boolean).join(' ');
+      feedback.textContent = `✓ Catalog refreshed: ${result.count} models${savedMessage}${extra ? ` · ${extra}` : ''}`;
       feedback.className = 'key-feedback success';
       const countEl = document.querySelector(`[data-id="${CSS.escape(provider.id)}"] .provider-models-count`);
       if (countEl) countEl.textContent = `${result.count} models`;
@@ -3097,7 +3103,8 @@ function buildOAuthProviderBodyContent(provider) {
     const result = await refreshProvider(provider.id);
     refreshBtn.disabled = false;
     if (result.ok) {
-      feedback.textContent = `✓ ${result.count} models`;
+      const extra = [result.notice, result.warning].filter(Boolean).join(' ');
+      feedback.textContent = `✓ ${result.count} models${extra ? ` · ${extra}` : ''}`;
       feedback.className = 'key-feedback success';
       const countEl = document.querySelector(`[data-id="${CSS.escape(provider.id)}"] .provider-models-count`);
       if (countEl) countEl.textContent = `${result.count} models`;
@@ -4664,6 +4671,7 @@ async function init() {
 
       const oauthSkipped = result.providers.filter(p => p.oauthWarning);
       const realFailed   = failed.filter(p => !p.oauthWarning);
+      const withNotice   = succeeded.filter(p => p.notice);
       const allSkipped   = skipped.length + oauthSkipped.length;
 
       const summary = document.createElement('div');
@@ -4673,11 +4681,20 @@ async function init() {
         + ` · ${state.allModels.length} models available`;
       status.appendChild(summary);
 
-      if (oauthSkipped.length > 0 || realFailed.length > 0) {
+      if (withNotice.length > 0 || oauthSkipped.length > 0 || realFailed.length > 0) {
         const detailSection = document.createElement('div');
         detailSection.style.marginTop = '8px';
         detailSection.style.paddingTop = '8px';
         detailSection.style.borderTop = '1px solid oklch(22% 0.015 265)';
+
+        for (const p of withNotice) {
+          const row = document.createElement('div');
+          row.style.color = 'oklch(82% 0.14 165)';
+          row.style.fontSize = '14px';
+          row.style.marginTop = '4px';
+          row.textContent = `✓ ${p.name}: ${p.notice}`;
+          detailSection.appendChild(row);
+        }
 
         for (const p of oauthSkipped) {
           const row = document.createElement('div');
@@ -4700,8 +4717,8 @@ async function init() {
         status.appendChild(detailSection);
       }
 
-      // Auto-hide after longer delay if there are real failures
-      setTimeout(() => { status.hidden = true; }, realFailed.length > 0 ? 12000 : 6000);
+      // Auto-hide after longer delay if there are real failures or catalog change notices
+      setTimeout(() => { status.hidden = true; }, realFailed.length > 0 ? 12000 : withNotice.length > 0 ? 9000 : 6000);
     } else {
       status.textContent = `✗ Refresh failed: ${result.error ?? 'Unknown error'}`;
       setTimeout(() => { status.hidden = true; }, 5000);

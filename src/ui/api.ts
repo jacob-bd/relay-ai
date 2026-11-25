@@ -1020,6 +1020,7 @@ async function handleRefreshAll(res: ServerResponse): Promise<void> {
         skipped: r.skipped ?? isOAuthExpected,
         oauthWarning: isOAuthExpected,
         reason: r.reason,
+        ...(r.notice ? { notice: r.notice } : {}),
       };
     });
     sendJson(res, 200, { ok: true, providers: summary, total: summary.reduce((n, p) => n + p.count, 0) });
@@ -1114,7 +1115,12 @@ async function handleProviderRefresh(req: IncomingMessage, res: ServerResponse):
     // Use the same refresh path as `relay-ai providers refresh-models` so counts match CLI
     const result = await refreshProviderModels(providerId, apiKey, registry);
     if (result.ok) {
-      sendJson(res, 200, { ok: true, count: result.modelCount ?? result.previousModelCount ?? 0 });
+      sendJson(res, 200, {
+        ok: true,
+        count: result.modelCount ?? result.previousModelCount ?? 0,
+        ...(result.notice ? { notice: result.notice } : {}),
+        ...(result.reason ? { warning: result.reason } : {}),
+      });
     } else {
       sendJson(res, 200, { ok: false, error: result.reason ?? 'Refresh failed' });
     }

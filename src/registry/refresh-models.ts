@@ -49,6 +49,7 @@ import {
   type CopilotPlanTier,
 } from './copilot-models.js';
 import { vertexAnthropicCachedModels } from './vertex-anthropic.js';
+import { refreshVertexModels } from './vertex-model-check.js';
 
 export interface RefreshProviderResult {
   id: string;
@@ -58,6 +59,7 @@ export interface RefreshProviderResult {
   previousModelCount?: number;
   skipped?: boolean;
   reason?: string;
+  notice?: string;
 }
 
 export interface RefreshModelsResult {
@@ -640,12 +642,23 @@ export async function refreshProviderModels(
     let baseUrl: string | undefined;
     let oauthFallbackReason: string | undefined;
     let incompleteReason: string | undefined;
+    let refreshNotice: string | undefined;
 
     if (source === 'zen-go-api') {
       models = await refreshZenGoProvider(provider);
     } else if (source === 'vertex-models-file') {
-      // Models are read live from vertex-models.json; nothing to fetch.
+      const refreshed = await refreshVertexModels();
+      if (!refreshed.ok) {
+        return {
+          id: provider.id,
+          name: provider.name,
+          ok: false,
+          reason: refreshed.error ?? 'Vertex AI model refresh failed.',
+        };
+      }
       models = vertexAnthropicCachedModels();
+      refreshNotice = refreshed.notice;
+      incompleteReason = refreshed.warning;
     } else if (source === 'commandcode') {
       const ccBaseUrl = (provider.api.url ?? COMMANDCODE_BASE_URL).replace(/\/$/, '');
       try {
@@ -791,6 +804,7 @@ export async function refreshProviderModels(
       modelCount: getAgentProviderModels(registry.providers.find(p => p.id === providerId)!).length,
       previousModelCount: provider.refreshedAt ? previousModelCount : undefined,
       reason: [oauthFallbackReason, incompleteReason].filter(Boolean).join(' ') || undefined,
+      ...(refreshNotice ? { notice: refreshNotice } : {}),
     };
   } catch (err) {
     return {

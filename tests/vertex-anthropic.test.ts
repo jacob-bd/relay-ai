@@ -7,7 +7,8 @@ import { aliasModelId } from '../src/proxy.js';
 import { addProviderFromTemplate } from '../src/registry/add-template.js';
 import { loadRegistry, saveRegistry } from '../src/registry/io.js';
 import { loadRegistryProviders } from '../src/registry/load.js';
-import { getProviderModels } from '../src/registry/provider-models.js';
+import { getProviderModels, supportsManualModels } from '../src/registry/provider-models.js';
+import { refreshProviderModels } from '../src/registry/refresh-models.js';
 import {
   addVertexModelEntry,
   isVertexAnthropicRegistered,
@@ -30,10 +31,12 @@ vi.mock('../src/vertex-env.js', async importOriginal => ({
 const access = vi.hoisted(() => ({ results: new Map<string, { ok: boolean; status?: number; error?: string }>() }));
 vi.mock('../src/registry/vertex-model-check.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/registry/vertex-model-check.js')>();
+  const stub = async (id: string) => access.results.get(id) ?? { ok: true };
   return {
     ...actual,
     filterVertexModelsByAccess: (entries: Parameters<typeof actual.filterVertexModelsByAccess>[0]) =>
-      actual.filterVertexModelsByAccess(entries, async id => access.results.get(id) ?? { ok: true }),
+      actual.filterVertexModelsByAccess(entries, stub),
+    refreshVertexModels: () => actual.refreshVertexModels(stub),
   };
 });
 
@@ -173,5 +176,96 @@ describe('Vertex AI (Claude) registry provider', () => {
     expect(denied).toMatchObject({ added: false, error: 'Permission denied on project' });
     expect(isVertexAnthropicRegistered()).toBe(false);
     expect(loadVertexModelEntries()).toHaveLength(2);
+  });
+
+  it('refresh detects newly allowed default models like Claude Haiku 5.5 and inserts them in default order', async () => {
+    writeFileSync(join(home(), 'vertex-models.json'), JSON.stringify([
+      { id: 'claude-opus-5-5', display_name: 'Claude Opus 5.5' },
+      { id: 'claude-sonnet-5-5', display_name: 'Claude Sonnet 5.5' },
+      { id: 'claude-sonnet-5', display_name: 'Claude Sonnet 5' },
+      { id: 'claude-opus-4-6', display_name: 'Claude Opus 4.6' },
+      { id: 'claude-sonnet-4-6', display_name: 'Claude Sonnet 4.6' },
+      { id: 'claude-haiku-4-5', display_name: 'Claude Haiku 4.5' },
+    ]));
+    await addProviderFromTemplate(template, template.id);
+
+    const refreshed = await refreshProviderModels('vertex-anthropic', null);
+    expect(refreshed).toMatchObject({
+      ok: true,
+      modelCount: 7,
+      previousModelCount: 6,
+      notice: 'Added Claude Haiku 5.5.',
+    });
+    expect(refreshed.reason).toBeUndefined();
+    expect(loadVertexModelEntries().map(m => m.id)).toEqual([
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
+      'claude-sonnet-5',
+      'claude-opus-4-6',
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5',
+    ]);
+  });
+
+  it('refresh drops refused models, keeps inconclusive ones, and skips unconfirmed extras', async () => {
+    writeFileSync(join(home(), 'vertex-models.json'), JSON.stringify([
+      { id: 'claude-opus-5-5', display_name: 'Claude Opus 5.5' },
+      { id: 'claude-sonnet-5-5', display_name: 'Claude Sonnet 5.5' },
+      { id: 'claude-sonnet-5', display_name: 'Claude Sonnet 5' },
+    ]));
+    await addProviderFromTemplate(template, template.id);
+
+    access.results.set('claude-sonnet-5', POLICY);
+    access.results.set('claude-sonnet-5-5', { ok: false, status: 429, error: 'Rate limit exceeded' });
+    // Unconfirmed extras (429/404) must NOT be added; only confirmed extras are added.
+    access.results.set('claude-opus-4-6', { ok: false, status: 429, error: 'Rate limit exceeded' });
+    access.results.set('claude-sonnet-4-6', { ok: false, status: 404, error: 'Not found' });
+    access.results.set('claude-haiku-4-5', { ok: false, status: 404, error: 'Not found' });
+
+    const refreshed = await refreshProviderModels('vertex-anthropic', null);
+    expect(refreshed.ok).toBe(true);
+    expect(refreshed.modelCount).toBe(3);
+    expect(refreshed.notice).toContain('Added Claude Haiku 5.5.');
+    expect(refreshed.notice).toContain("Removed Claude Sonnet 5 (blocked by your organization's model policy).");
+    expect(refreshed.reason).toContain("Couldn't confirm Claude Sonnet 5.5");
+    expect(loadVertexModelEntries().map(m => m.id)).toEqual([
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
+    ]);
+  });
+
+  it('refresh leaves the saved list untouched on auth failure or missing setup', async () => {
+    await addProviderFromTemplate(template, template.id);
+
+    access.results.set('claude-sonnet-5-5', { ok: false, status: 403, error: 'Permission denied' });
+    const denied = await refreshProviderModels('vertex-anthropic', null);
+    expect(denied).toMatchObject({ ok: false, reason: 'Permission denied' });
+    expect(loadVertexModelEntries()).toHaveLength(2);
+
+    access.results.clear();
+    adc.present = false;
+    const noAdc = await refreshProviderModels('vertex-anthropic', null);
+    expect(noAdc.ok).toBe(false);
+    expect(noAdc.reason).toContain('gcloud auth application-default login');
+    expect(loadVertexModelEntries()).toHaveLength(2);
+  });
+
+  it('refresh does not create vertex-models.json when defaults are all allowed', async () => {
+    rmSync(join(home(), 'vertex-models.json'), { force: true });
+    await addProviderFromTemplate(template, template.id);
+    expect(existsSync(join(home(), 'vertex-models.json'))).toBe(false);
+
+    const refreshed = await refreshProviderModels('vertex-anthropic', null);
+    expect(refreshed).toMatchObject({ ok: true, modelCount: DEFAULT_VERTEX_MODELS.length });
+    expect(refreshed.notice).toBeUndefined();
+    expect(existsSync(join(home(), 'vertex-models.json'))).toBe(false);
+  });
+
+  it('supports manual models in the provider catalog', async () => {
+    await addProviderFromTemplate(template, template.id);
+    const stored = loadRegistry().providers.find(p => p.id === 'vertex-anthropic')!;
+    expect(supportsManualModels(stored)).toBe(true);
   });
 });

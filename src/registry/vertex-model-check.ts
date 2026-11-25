@@ -7,10 +7,16 @@ import { generateText } from 'ai';
 import { formatUpstreamError } from '../codex/upstream-error.js';
 import { VERTEX_ANTHROPIC_NPM } from '../constants.js';
 import { createLanguageModel } from '../provider-factory.js';
-import type { VertexModelEntry } from '../vertex-env.js';
+import {
+  DEFAULT_VERTEX_MODELS,
+  loadVertexModelEntries,
+  resolveVertexProject,
+  saveVertexModelEntries,
+  type VertexModelEntry,
+} from '../vertex-env.js';
 import { filterModelsByAvailability, type ProbeClassification } from './probe-models.js';
 import type { CachedModel } from './types.js';
-import { VERTEX_ANTHROPIC_PROVIDER_ID } from './vertex-anthropic.js';
+import { VERTEX_ANTHROPIC_PROVIDER_ID, vertexAnthropicSetupError } from './vertex-anthropic.js';
 
 export interface VertexModelAccess {
   ok: boolean;
@@ -97,5 +103,106 @@ export async function filterVertexModelsByAccess(
       .map(entry => ({ entry, reason: reasons.get(entry.id) ?? 'not available to your project' })),
     confirmedIds: entries.filter(entry => confirmed.has(entry.id)).map(entry => entry.id),
     aborted: false,
+  };
+}
+
+export interface VertexRefreshOutcome {
+  ok: boolean;
+  error?: string;
+  added: VertexModelEntry[];
+  removed: Array<{ entry: VertexModelEntry; reason: string }>;
+  unchecked: VertexModelEntry[];
+  /** Human-readable summary of added/removed models. */
+  notice?: string;
+  /** Warning when some existing models couldn't be confirmed (rate limit / outage). */
+  warning?: string;
+}
+
+/** Place newly discovered defaults where they sit in DEFAULT_VERTEX_MODELS while keeping existing entries intact. */
+function insertInDefaultOrder(kept: VertexModelEntry[], added: VertexModelEntry[]): VertexModelEntry[] {
+  const rank = new Map(DEFAULT_VERTEX_MODELS.map((m, i) => [m.id, i]));
+  const next = [...kept];
+  for (const entry of added) {
+    const entryRank = rank.get(entry.id) ?? Number.POSITIVE_INFINITY;
+    const insertAt = next.findIndex(item => (rank.get(item.id) ?? Number.POSITIVE_INFINITY) > entryRank);
+    if (insertAt >= 0) next.splice(insertAt, 0, entry);
+    else next.push(entry);
+  }
+  return next;
+}
+
+/**
+ * Re-probe the user's Vertex model list plus any missing built-in Claude defaults:
+ * add newly allowed defaults, drop models Vertex explicitly refuses, and leave the
+ * saved list untouched on auth errors, outages, or when nothing changed.
+ */
+export async function refreshVertexModels(
+  check: (modelId: string) => Promise<VertexModelAccess> = checkVertexModelAccess,
+): Promise<VertexRefreshOutcome> {
+  const setupError = vertexAnthropicSetupError();
+  if (setupError) {
+    return {
+      ok: false,
+      error: `${setupError.error} ${setupError.hint}`,
+      added: [],
+      removed: [],
+      unchecked: [],
+    };
+  }
+
+  const current = loadVertexModelEntries();
+  const extras = DEFAULT_VERTEX_MODELS.filter(d => !current.some(c => c.id === d.id));
+  const outcome = await filterVertexModelsByAccess([...current, ...extras], check);
+  if (outcome.aborted) {
+    return {
+      ok: false,
+      error: outcome.abortDetail ?? 'Vertex AI rejected the request.',
+      added: [],
+      removed: [],
+      unchecked: [],
+    };
+  }
+
+  const currentIds = new Set(current.map(c => c.id));
+  const removed = outcome.removed.filter(r => currentIds.has(r.entry.id));
+  const removedIds = new Set(removed.map(r => r.entry.id));
+  const kept = current.filter(c => !removedIds.has(c.id));
+  const confirmedIds = new Set(outcome.confirmedIds);
+  const added = extras.filter(e => confirmedIds.has(e.id));
+  const unchecked = kept.filter(m => !confirmedIds.has(m.id));
+  const next = insertInDefaultOrder(kept, added);
+
+  if (next.length === 0) {
+    return {
+      ok: false,
+      error: `None of the ${current.length + extras.length} Claude models are available to project ${resolveVertexProject() ?? '(not set)'}.`,
+      added: [],
+      removed,
+      unchecked: [],
+    };
+  }
+
+  if (added.length > 0 || removed.length > 0) {
+    saveVertexModelEntries(next);
+  }
+
+  const noticeParts: string[] = [];
+  if (added.length > 0) {
+    noticeParts.push(`Added ${added.map(m => m.display_name).join(', ')}.`);
+  }
+  if (removed.length > 0) {
+    noticeParts.push(`Removed ${removed.map(r => `${r.entry.display_name} (${r.reason})`).join(', ')}.`);
+  }
+  const warning = unchecked.length > 0
+    ? `Couldn't confirm ${unchecked.map(m => m.display_name).join(', ')} right now (rate limit or outage) — kept in your list.`
+    : undefined;
+
+  return {
+    ok: true,
+    added,
+    removed,
+    unchecked,
+    ...(noticeParts.length > 0 ? { notice: noticeParts.join(' ') } : {}),
+    ...(warning ? { warning } : {}),
   };
 }

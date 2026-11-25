@@ -371,6 +371,9 @@ export async function runProvidersRefreshModels(providerId?: string): Promise<nu
       ? ''
       : diff > 0 ? ` (+${diff})` : diff < 0 ? ` (${diff})` : '';
     p.log.success(`${result.name}: ${result.modelCount} model${result.modelCount === 1 ? '' : 's'} updated${diffStr}.`);
+    if (result.notice) {
+      p.log.info(result.notice);
+    }
     if (result.reason) {
       p.log.warn(result.reason);
     }
@@ -396,6 +399,9 @@ export async function runProvidersRefreshModels(providerId?: string): Promise<nu
         ? ''
         : diff > 0 ? ` (+${diff})` : diff < 0 ? ` (${diff})` : '';
       p.log.info(`  ${r.name}: ${r.modelCount} model${r.modelCount === 1 ? '' : 's'}${diffStr}`);
+      if (r.notice) {
+        p.log.info(`  ${r.notice}`);
+      }
       if (r.reason) {
         p.log.warn(`  ${r.reason}`);
       }
@@ -1167,7 +1173,7 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
       detailOptions.push({ value: 'vertex-reset', label: "Reset to Relay's latest model list", hint: 'Follows future Relay updates' });
     }
   }
-  if (supportsManualModels(provider) && provider.enabled) {
+  if (!vertex && supportsManualModels(provider) && provider.enabled) {
     detailOptions.push({ value: 'add-model', label: 'Add model manually', hint: 'Test an exact model ID, then save it' });
   }
   if (provider.manualModels?.length) {
